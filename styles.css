@@ -172,7 +172,7 @@ button {
   transition: color 1000ms ease, background-color 1000ms ease;
 }
 
-.page-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 0; }
 
 #theme-toggle {
   width: 36px;
@@ -181,6 +181,7 @@ button {
   color: var(--text);
   font-weight: 700;
   transition: none;
+  padding-right: 0px;
 }
 
 .page-header #theme-toggle {
