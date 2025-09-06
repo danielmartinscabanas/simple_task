@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="styles.css">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50%25' x='50%25' dominant-baseline='middle' text-anchor='middle' font-size='52'%3E%E2%9C%85%3C/text%3E%3C/svg%3E">
+    <script>
+      (function(){
+        try{
+          var isMobile = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+          if(isMobile){
+            var vp = document.querySelector('meta[name="viewport"]');
+            if(vp) vp.setAttribute('content','width=device-width, initial-scale=2');
+          }
+        }catch(e){}
+      })();
+    </script>
     <title>Tasks</title>
 </head>
 <body>
