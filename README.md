@@ -1,4 +1,4 @@
-# SimpleTask — Minimal Client-Side Checklist
+# SimpleTask: A Minimal Client-Side Checklist
 
 SimpleTask is a tiny, no-frills checklist you can open and use instantly.
 
