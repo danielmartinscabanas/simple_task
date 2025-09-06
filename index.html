@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="styles.css">
+    <title>Simple Tasks</title>
+</head>
+<body>
+    <div class="page-header">
+        <h2>Tasks</h2>
+        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">☽</button>
+    </div>
+    <section id="todo-section">
+        <h3>Do</h3>
+        <hr />
+        <div id="todo-list"></div>
+        <input id="new-task" type="text" placeholder="New task" />
+    </section>
+
+    <section id="done-section">
+        <h3>Done</h3>
+        <hr />
+        <div id="done-list"></div>
+    </section>
+    <script>
+        class JsonStorage {
+            constructor(storageKey){
+                this.storageKey = storageKey;
+            }
+
+            save(dataObject){
+                localStorage.setItem(this.storageKey, JSON.stringify(dataObject));
+            }
+
+            load(){
+                const json = localStorage.getItem(this.storageKey);
+                return json ? JSON.parse(json) : null;
+            }
+
+            remove(){
+                localStorage.removeItem(this.storageKey);
+            }
+        }
+    
+        class Tasks{
+            constructor(){
+                this.storage = new JsonStorage('tasks');
+                this.tasks = this.storage.load();
+                this.draggingId = null;
+            }
+
+            add(text){
+                try{
+                    const taskId = crypto.randomUUID();
+                    const existing = this.tasks || {};
+                    const maxOrder = Math.max(-1, ...Object.values(existing).map(t => (t && typeof t.order === 'number') ? t.order : -1));
+                    const newTask = {"task": text, "done": false, "order": maxOrder + 1};
+                    this.tasks[taskId] = newTask;
+                    this.storage.save(this.tasks);
+                    console.log(`Task '${text}' created.`);
+
+                    return true;
+
+                } catch(err){
+                    console.error(`An error ocurred on creating task '${text}':`, err.message);
+
+                    return false;
+                }
+            }
+
+            remove(taskId){
+                try {
+                    delete this.tasks[taskId];
+                    this.storage.save(this.tasks);
+                    console.log(`Task '${taskId}' removed.`);
+
+                    return true;
+                } catch(err){
+                    console.error(`An error ocurred on removing task '${taskId}':`, err.message);
+
+                    return false;
+                }
+            }
+
+            done(taskId){
+                try{
+                    this.tasks[taskId]["done"] = true;
+                    this.storage.save(this.tasks);
+                    console.log(`Task '${taskId}' marked as done.`);
+
+                    return true;
+                } catch(err){
+                    console.error(`An error ocurred on marking task '${taskId}' as done:`, err.message);
+
+                    return false;
+                }
+            }
+
+            undone(taskId){
+                try{
+                    this.tasks[taskId]["done"] = false;
+                    this.storage.save(this.tasks);
+                    console.log(`Task '${taskId}' marked as undone.`);
+
+                    return true;
+                } catch(err){
+                    console.error(`An error ocurred on marking task '${taskId}' as undone:`, err.message);
+
+                    return false;
+                }
+            }
+
+            render(){
+                const todoList = document.getElementById('todo-list');
+                const doneList = document.getElementById('done-list');
+                const doneSection = document.getElementById('done-section');
+                if (!todoList || !doneList) return;
+
+                todoList.innerHTML = '';
+                doneList.innerHTML = '';
+
+                const entries = (this.tasks && typeof this.tasks === 'object') ? Object.entries(this.tasks) : [];
+                entries.sort((a,b) => {
+                    const ao = (a[1] && typeof a[1].order === 'number') ? a[1].order : 0;
+                    const bo = (b[1] && typeof b[1].order === 'number') ? b[1].order : 0;
+                    return ao - bo;
+                });
+                let hasDone = false;
+
+                for (const [taskId, item] of entries){
+                    const row = document.createElement('div');
+                    row.className = 'task-row';
+                    row.dataset.id = taskId;
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = !!item.done;
+                    checkbox.addEventListener('change', () => {
+                        if (checkbox.checked) {
+                            this.done(taskId);
+                        } else {
+                            this.undone(taskId);
+                        }
+                        setTimeout(() => this.render(), 140);
+                    });
+
+                    const text = document.createElement('span');
+                    text.textContent = ` ${item.task} `;
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.textContent = '🗑';
+                    removeBtn.setAttribute('aria-label', 'Remove task');
+                    removeBtn.setAttribute('title', 'Remove task');
+                    removeBtn.addEventListener('click', () => {
+                        this.remove(taskId);
+                        this.render();
+                    });
+
+                    row.appendChild(checkbox);
+                    row.appendChild(text);
+                    row.appendChild(removeBtn);
+
+                    if (item.done) {
+                        hasDone = true;
+                        doneList.appendChild(row);
+                    } else {
+                        row.draggable = true;
+                        row.addEventListener('dragstart', (e) => {
+                            this.draggingId = taskId;
+                            row.classList.add('dragging');
+                            if (e.dataTransfer) {
+                                e.dataTransfer.effectAllowed = 'move';
+                                e.dataTransfer.setData('text/plain', taskId);
+                            }
+                        });
+                        row.addEventListener('dragend', () => {
+                            row.classList.remove('dragging');
+                            this.draggingId = null;
+                            const orderIds = Array.from(todoList.querySelectorAll('.task-row')).map(el => el.dataset.id);
+                            orderIds.forEach((id, idx) => { if (this.tasks[id]) this.tasks[id].order = idx; });
+                            this.storage.save(this.tasks);
+                            this.render();
+                        });
+                        todoList.appendChild(row);
+                    }
+                }
+                const getDragAfterElement = (container, y) => {
+                    const els = [...container.querySelectorAll('.task-row:not(.dragging)')];
+                    return els.reduce((closest, child) => {
+                        const box = child.getBoundingClientRect();
+                        const offset = y - box.top - box.height / 2;
+                        if (offset < 0 && offset > closest.offset) {
+                            return { offset, element: child };
+                        } else {
+                            return closest;
+                        }
+                    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+                };
+                todoList.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    const dragging = todoList.querySelector('.task-row.dragging');
+                    if (!dragging) return;
+
+                    const rows = Array.from(todoList.querySelectorAll('.task-row'));
+                    const prev = new Map(rows.map(el => [el.dataset.id, el.getBoundingClientRect().top]));
+
+                    const afterElement = getDragAfterElement(todoList, e.clientY);
+                    if (afterElement == null) {
+                        todoList.appendChild(dragging);
+                    } else {
+                        todoList.insertBefore(dragging, afterElement);
+                    }
+
+                    const newRows = Array.from(todoList.querySelectorAll('.task-row'));
+                    newRows.forEach(el => {
+                        if (el === dragging) return;
+                        const oldTop = prev.get(el.dataset.id);
+                        if (oldTop == null) return;
+                        const newTop = el.getBoundingClientRect().top;
+                        const dy = oldTop - newTop;
+                        if (dy !== 0) {
+                            el.style.transition = 'none';
+                            el.style.transform = `translateY(${dy}px)`;
+                            requestAnimationFrame(() => {
+                                el.style.transition = 'transform 150ms ease';
+                                el.style.transform = '';
+                            });
+                        }
+                    });
+                });
+                if (doneSection) doneSection.style.display = hasDone ? '' : 'none';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const app = new Tasks();
+
+            const addInput = document.getElementById('new-task');
+            if (addInput) {
+                addInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        const text = (addInput.value || '').trim();
+                        if (!text) return;
+                        app.tasks = app.tasks || {};
+                        if (app.add(text)) {
+                            addInput.value = '';
+                            app.render();
+                        }
+                    }
+                });
+            }
+
+            const themeToggle = document.getElementById('theme-toggle');
+            const themeStorage = new JsonStorage('theme');
+            const applyTheme = (mode) => {
+                document.body.setAttribute('data-theme', mode);
+                if (themeToggle) themeToggle.textContent = mode === 'dark' ? '☀' : '☽';
+                themeStorage.save(mode);
+            };
+            const savedTheme = themeStorage.load() || 'light';
+            applyTheme(savedTheme);
+            if (themeToggle) {
+                themeToggle.addEventListener('click', () => {
+                    const next = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                    applyTheme(next);
+                });
+            }
+
+            app.render();
+        });
+    </script>
+</body>
+</html>
