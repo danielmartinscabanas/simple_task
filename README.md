@@ -11,7 +11,7 @@ Why it exists:
 What you get:
 - Add tasks (press Enter), mark done/undone, remove tasks.
 - Two sections: “To do” and “Done”.
-- Drag to reorder tasks in the “Do” section.
+- Drag to reorder tasks in the “To do” section.
 - Light/Dark theme toggle.
 - 100% client-side — no endpoints, no server.
 
