@@ -173,8 +173,9 @@ button {
 }
 
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 0; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
 
-#theme-toggle {
+#theme-toggle, #export-tasks, #import-tasks {
   width: 36px;
   height: 36px;
   background: var(--bg);
@@ -184,14 +185,28 @@ button {
   padding-right: 0px;
 }
 
-.page-header #theme-toggle {
-  opacity: 0;
-  pointer-events: none;
+.page-header #theme-toggle, .page-header #export-tasks, .page-header #import-tasks {
+  opacity: 1;
+  pointer-events: auto;
   transition: opacity 150ms ease;
 }
 
 .page-header:hover #theme-toggle,
-.page-header:focus-within #theme-toggle {
+.page-header:focus-within #theme-toggle,
+.page-header:hover #export-tasks,
+.page-header:focus-within #export-tasks,
+.page-header:hover #import-tasks,
+.page-header:focus-within #import-tasks {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Mobile-friendly sizing without viewport zoom */
+@media (max-width: 480px), (pointer: coarse) {
+  section { font-size: 18px; }
+  h3 { font-size: 16px; }
+  input[type="text"] { height: 42px; font-size: 16px; padding: 10px 12px; }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+  button { width: 36px; height: 36px; }
+  #theme-toggle { width: 40px; height: 40px; }
 }
