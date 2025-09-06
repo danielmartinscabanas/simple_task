@@ -5,23 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="styles.css">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50%25' x='50%25' dominant-baseline='middle' text-anchor='middle' font-size='52'%3E%E2%9C%85%3C/text%3E%3C/svg%3E">
-    <script>
-      (function(){
-        try{
-          var isMobile = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
-          if(isMobile){
-            var vp = document.querySelector('meta[name="viewport"]');
-            if(vp) vp.setAttribute('content','width=device-width, initial-scale=2');
-          }
-        }catch(e){}
-      })();
-    </script>
     <title>Tasks</title>
 </head>
 <body>
     <div class="page-header">
         <h2>Tasks</h2>
-        <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">☽</button>
+        <div class="header-actions">
+            <button id="export-tasks" aria-label="Export tasks" title="Export tasks">⤓</button>
+            <button id="import-tasks" aria-label="Import tasks" title="Import tasks">⤒</button>
+            <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">☽</button>
+            <input id="import-file" type="file" accept="application/json" style="display:none" />
+        </div>
     </div>
     <section id="todo-section">
         <h3>To do</h3>
@@ -276,6 +270,53 @@
                 themeToggle.addEventListener('click', () => {
                     const next = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
                     applyTheme(next);
+                });
+            }
+
+            const exportBtn = document.getElementById('export-tasks');
+            const importBtn = document.getElementById('import-tasks');
+            const importFile = document.getElementById('import-file');
+
+            if (exportBtn) {
+                exportBtn.addEventListener('click', () => {
+                    try{
+                        const data = JSON.stringify(app.tasks || {}, null, 2);
+                        const blob = new Blob([data], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'tasks.json';
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        URL.revokeObjectURL(url);
+                    } catch(err) {
+                        console.error('Export failed:', err);
+                    }
+                });
+            }
+
+            if (importBtn && importFile) {
+                importBtn.addEventListener('click', () => importFile.click());
+                importFile.addEventListener('change', () => {
+                    const file = importFile.files && importFile.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        try{
+                            const parsed = JSON.parse(reader.result);
+                            if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON');
+                            app.tasks = parsed;
+                            app.storage.save(app.tasks);
+                            app.render();
+                        } catch(err){
+                            console.error('Import failed:', err);
+                            alert('Invalid tasks file.');
+                        } finally {
+                            importFile.value = '';
+                        }
+                    };
+                    reader.readAsText(file);
                 });
             }
 
