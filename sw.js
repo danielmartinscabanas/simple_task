@@ -7,7 +7,8 @@ const ASSETS = [
   '/simple_task/manifest.webmanifest',
   '/simple_task/icon.svg',
   '/simple_task/icon-192.png',
-  '/simple_task/icon-512.png'
+  '/simple_task/icon-512.png',
+  '/simple_task/copy-icon.svg'
 ];
 
 self.addEventListener('install', (event) => {

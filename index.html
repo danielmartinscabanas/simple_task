@@ -39,7 +39,7 @@
             <div class="modal-row">
                 <input id="share-url" type="text" readonly aria-label="Share URL" />
                 <div class="modal-actions">
-                    <button id="copy-url" aria-label="Copy URL" title="Copy URL">🗎</button>
+                    <button id="copy-url" aria-label="Copy URL" title="Copy URL"><img src="copy-icon.svg" alt="" class="icon-img" /></button>
                     <button id="close-modal" aria-label="Close" title="Close">✕</button>
                 </div>
             </div>
@@ -221,11 +221,13 @@
                             const startX = e.clientX;
                             const startY = e.clientY;
                             let started = false;
+                            // Capture pointer early so we continue receiving moves
+                            try { row.setPointerCapture && row.setPointerCapture(e.pointerId); } catch (_) {}
                             let holdTimer = setTimeout(() => {
                                 started = true;
                                 this.draggingId = taskId;
                                 row.classList.add('dragging');
-                                try { row.setPointerCapture && row.setPointerCapture(e.pointerId); } catch (_) {}
+                                row.style.touchAction = 'none';
                             }, HOLD_MS);
 
                             const onMove = (ev) => {
@@ -234,7 +236,11 @@
                                     const dy = (ev.clientY ?? startY) - startY;
                                     if (Math.hypot(dx, dy) > TOL) {
                                         clearTimeout(holdTimer); holdTimer = null;
-                                        // user is scrolling; don't start drag
+                                        // user is scrolling; release capture and stop tracking
+                                        try { row.releasePointerCapture && row.releasePointerCapture(e.pointerId); } catch (_) {}
+                                        window.removeEventListener('pointermove', onMove, true);
+                                        window.removeEventListener('pointerup', onUp, true);
+                                        window.removeEventListener('pointercancel', onUp, true);
                                     }
                                     return;
                                 }
@@ -271,6 +277,7 @@
                                 if (started) {
                                     row.classList.remove('dragging');
                                     this.draggingId = null;
+                                    row.style.touchAction = '';
                                     const orderIds = Array.from(todoList.querySelectorAll('.task-row')).map(el => el.dataset.id);
                                     orderIds.forEach((id, idx) => { if (this.tasks[id]) this.tasks[id].order = idx; });
                                     this.storage.save(this.tasks);
@@ -280,7 +287,7 @@
                                 window.removeEventListener('pointerup', onUp, true);
                                 window.removeEventListener('pointercancel', onUp, true);
                             };
-                            window.addEventListener('pointermove', onMove, true);
+                            window.addEventListener('pointermove', onMove, { capture: true, passive: false });
                             window.addEventListener('pointerup', onUp, true);
                             window.addEventListener('pointercancel', onUp, true);
                         });
@@ -531,16 +538,19 @@
                 });
             }
 
+            const setCopyDefaultIcon = () => { if (copyBtn) copyBtn.innerHTML = '<img src="copy-icon.svg" alt="" class="icon-img">'; };
             if (copyBtn && shareInput) {
                 copyBtn.addEventListener('click', async () => {
                     try {
                         await navigator.clipboard.writeText(shareInput.value);
                         copyBtn.textContent = '✓';
-                        setTimeout(() => copyBtn.textContent = '🗎', 1000);
+                        setTimeout(setCopyDefaultIcon, 1000);
                     } catch (err) {
                         try {
                             shareInput.select();
                             document.execCommand('copy');
+                            copyBtn.textContent = '✓';
+                            setTimeout(setCopyDefaultIcon, 1000);
                         } catch(_) {}
                     }
                 });
