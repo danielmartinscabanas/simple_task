@@ -18,11 +18,17 @@ SimpleTask is a tiny, no‑frills checklist you can open and use instantly.
 - Export tasks as a URL for fast sync; opening the URL on another device imports the tasks and redirects back to the app.
 - Light/Dark theme toggle.
 - Mobile‑friendly sizing; 100% client‑side — no servers or endpoints.
+- Installable PWA on mobile/desktop with offline support.
 
 ## Usage
 
 - Open `https://danielmartinscabanas.github.io/simple_task/` in your browser and start typing. Use the header buttons to toggle theme or export.
 - To sync: click Export to get a shareable URL. Open that URL on another device; it will load the tasks and route back to the app automatically.
+
+## PWA
+
+- The app includes a `manifest.webmanifest` and a `sw.js` service worker. When hosted at `https://danielmartinscabanas.github.io/simple_task/`, modern browsers will offer “Install app”.
+- The service worker caches core assets for offline use. After making changes, bump `CACHE_NAME` in `sw.js` to force an update.
 
 ## License
 
