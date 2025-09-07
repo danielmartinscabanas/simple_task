@@ -1,14 +1,13 @@
-const CACHE_NAME = 'simpletask-v2';
 const ASSETS = [
   '/simple_task/',
   '/simple_task/index.html',
-  '/simple_task/styles.css',
+  '/simple_task/assets/css/styles.css',
   '/simple_task/404.html',
   '/simple_task/manifest.webmanifest',
-  '/simple_task/icon.svg',
-  '/simple_task/icon-192.png',
-  '/simple_task/icon-512.png',
-  '/simple_task/copy-icon.svg'
+  '/simple_task/assets/icons/icon.svg',
+  '/simple_task/assets/icons/icon-192.png',
+  '/simple_task/assets/icons/icon-512.png',
+  '/simple_task/assets/icons/copy-icon.svg'
 ];
 
 self.addEventListener('install', (event) => {

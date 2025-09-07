@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="assets/css/styles.css">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50%25' x='50%25' dominant-baseline='middle' text-anchor='middle' font-size='52'%3E%E2%9C%85%3C/text%3E%3C/svg%3E">
     <link rel="manifest" href="manifest.webmanifest">
     <meta name="theme-color" content="#349a79">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="apple-touch-icon" href="assets/icons/icon-192.png">
     <title>Tasks</title>
 </head>
 <body>
@@ -39,7 +39,7 @@
             <div class="modal-row">
                 <input id="share-url" type="text" readonly aria-label="Share URL" />
                 <div class="modal-actions">
-                    <button id="copy-url" aria-label="Copy URL" title="Copy URL"><img src="copy-icon.svg" alt="" class="icon-img" /></button>
+                    <button id="copy-url" aria-label="Copy URL" title="Copy URL"><img src="assets/icons/copy-icon.svg" alt="" class="icon-img" width="18" height="18" /></button>
                     <button id="close-modal" aria-label="Close" title="Close">✕</button>
                 </div>
             </div>
@@ -63,7 +63,14 @@
 
             load(){
                 const json = localStorage.getItem(this.storageKey);
-                return json ? JSON.parse(json) : null;
+                if (!json) return null;
+                try {
+                    return JSON.parse(json);
+                } catch (e) {
+                    try { localStorage.removeItem(this.storageKey); } catch (_) {}
+                    console.warn(`Invalid JSON in localStorage for key '${this.storageKey}'. Clearing it.`, e);
+                    return null;
+                }
             }
 
             remove(){
@@ -342,23 +349,54 @@
             }
         }
 
-        document.addEventListener('DOMContentLoaded', () => {
-            // URL-safe Base64 and LZW compression helpers
-            const bytesToBase64Url = (bytes) => {
+        class Theme {
+            constructor(toggleEl){
+                this.toggleEl = toggleEl;
+                this.storage = new JsonStorage('theme');
+            }
+            apply(mode){
+                document.body.setAttribute('data-theme', mode);
+                document.documentElement.setAttribute('data-theme', mode);
+                if (this.toggleEl) this.toggleEl.textContent = mode === 'dark' ? '☀' : '☽';
+                this.storage.save(mode);
+            }
+            init(){
+                const saved = this.storage.load() || 'light';
+                this.apply(saved);
+                if (this.toggleEl) {
+                    this.toggleEl.addEventListener('click', () => {
+                        const next = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+                        this.apply(next);
+                    });
+                }
+            }
+        }
+
+        class Share {
+            constructor(app, baseUrl, basePath, modal, inputEl, copyBtn, closeBtn){
+                this.app = app;
+                this.baseUrl = baseUrl;
+                this.basePath = basePath;
+                this.modal = modal;
+                this.inputEl = inputEl;
+                this.copyBtn = copyBtn;
+                this.closeBtn = closeBtn;
+            }
+
+            static bytesToBase64Url(bytes){
                 let binary = '';
                 for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
                 return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
-            };
-            const base64UrlToBytes = (b64url) => {
+            }
+            static base64UrlToBytes(b64url){
                 let b64 = (b64url || '').replace(/-/g, '+').replace(/_/g, '/');
                 while (b64.length % 4) b64 += '=';
                 const binary = atob(b64);
                 const out = new Uint8Array(binary.length);
                 for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
                 return out;
-            };
-            // LZW (12-bit) compression over UTF-8 bytes
-            const lzwCompress = (bytes) => {
+            }
+            static lzwCompress(bytes){
                 const CLEAR = 4095;
                 let dict = new Map();
                 for (let i = 0; i < 256; i++) dict.set(String.fromCharCode(i), i);
@@ -383,8 +421,6 @@
                     }
                 }
                 if (w !== '') codes.push(dict.get(w));
-
-                // Pack 12-bit codes
                 const out = [];
                 let bitBuffer = 0, bitCount = 0;
                 for (let k = 0; k < codes.length; k++) {
@@ -399,10 +435,9 @@
                 }
                 if (bitCount > 0) out.push(bitBuffer & 0xff);
                 return new Uint8Array(out);
-            };
-            const lzwDecompress = (packed) => {
+            }
+            static lzwDecompress(packed){
                 const CLEAR = 4095;
-                // Unpack 12-bit codes
                 const codes = [];
                 let bitBuffer = 0, bitCount = 0;
                 for (let i = 0; i < packed.length; i++) {
@@ -437,37 +472,107 @@
                 const out = new Uint8Array(result.length);
                 for (let i = 0; i < result.length; i++) out[i] = result.charCodeAt(i) & 0xff;
                 return out;
-            };
-            const encodeTasksPayload = (obj) => {
+            }
+            static encodeTasksPayload(obj){
                 const json = JSON.stringify(obj || {});
                 const utf8 = new TextEncoder().encode(json);
-                const plain = bytesToBase64Url(utf8);
-                const compressed = bytesToBase64Url(lzwCompress(utf8));
+                const plain = Share.bytesToBase64Url(utf8);
+                const compressed = Share.bytesToBase64Url(Share.lzwCompress(utf8));
                 return (compressed.length + 2 < plain.length ? 'c~' + compressed : 'p~' + plain);
-            };
-            const decodeTasksPayload = (payload) => {
+            }
+            static decodeTasksPayload(payload){
                 if (!payload) throw new Error('Empty payload');
                 const sep = payload.indexOf('~');
                 if (sep > 0 && sep < 4) {
                     const mode = payload.slice(0, sep);
                     const body = payload.slice(sep + 1);
                     if (mode === 'c') {
-                        const bytes = base64UrlToBytes(body);
-                        const dec = lzwDecompress(bytes);
+                        const bytes = Share.base64UrlToBytes(body);
+                        const dec = Share.lzwDecompress(bytes);
                         const json = new TextDecoder().decode(dec);
                         return JSON.parse(json);
                     } else if (mode === 'p') {
-                        const bytes = base64UrlToBytes(body);
+                        const bytes = Share.base64UrlToBytes(body);
                         const json = new TextDecoder().decode(bytes);
                         return JSON.parse(json);
                     }
                 }
-                // Back-compat: treat as plain base64 JSON
-                const bytes = base64UrlToBytes(payload);
+                const bytes = Share.base64UrlToBytes(payload);
                 const json = new TextDecoder().decode(bytes);
                 return JSON.parse(json);
-            };
+            }
+            openModal(url){
+                if (!this.modal || !this.inputEl) return;
+                this.inputEl.value = url;
+                this.modal.classList.add('open');
+                this.modal.setAttribute('aria-hidden', 'false');
+                setTimeout(() => { try { this.inputEl.focus(); this.inputEl.select(); } catch(_) {} }, 0);
+            }
+            closeModal(){
+                if (!this.modal) return;
+                this.modal.classList.remove('open');
+                this.modal.setAttribute('aria-hidden', 'true');
+            }
+            setCopyDefaultIcon(){
+                if (this.copyBtn) this.copyBtn.innerHTML = '<img src="assets/icons/copy-icon.svg" alt="" class="icon-img" width="18" height="18">';
+            }
+            attachCopy(){
+                if (this.copyBtn && this.inputEl) {
+                    this.copyBtn.addEventListener('click', async () => {
+                        try {
+                            await navigator.clipboard.writeText(this.inputEl.value);
+                            this.copyBtn.textContent = '✓';
+                            setTimeout(() => this.setCopyDefaultIcon(), 1000);
+                        } catch (err) {
+                            try {
+                                this.inputEl.select();
+                                document.execCommand('copy');
+                                this.copyBtn.textContent = '✓';
+                                setTimeout(() => this.setCopyDefaultIcon(), 1000);
+                            } catch(_) {}
+                        }
+                    });
+                }
+            }
+            attachModalEvents(){
+                if (this.closeBtn) this.closeBtn.addEventListener('click', () => this.closeModal());
+                if (this.modal) this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.closeModal(); });
+                document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeModal(); });
+            }
+            handleExportClick(){
+                try{
+                    const payload = Share.encodeTasksPayload(this.app.tasks || {});
+                    const url = `${this.baseUrl}${payload}`;
+                    this.openModal(url);
+                } catch(err) {
+                    console.error('Export failed:', err);
+                }
+            }
+            maybeImportFromUrl(){
+                try {
+                    const path = location.pathname || '';
+                    const idx = path.indexOf(this.basePath);
+                    if (idx === -1) return false;
+                    const rest = path.slice(idx + this.basePath.length).replace(/^\/+/, '');
+                    if (!rest) return false;
+                    const parsed = Share.decodeTasksPayload(rest);
+                    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid data');
+                    this.app.tasks = parsed;
+                    this.app.storage.save(this.app.tasks);
+                    location.replace(this.baseUrl);
+                    return true;
+                } catch (err) {
+                    console.error('URL import failed:', err);
+                    return false;
+                }
+            }
+            init(){
+                this.attachCopy();
+                this.attachModalEvents();
+            }
+        }
 
+        document.addEventListener('DOMContentLoaded', () => {
             const BASE_PATH = '/simple_task/';
             const BASE_URL = 'https://danielmartinscabanas.github.io' + BASE_PATH;
 
@@ -489,97 +594,20 @@
             }
 
             const themeToggle = document.getElementById('theme-toggle');
-            const themeStorage = new JsonStorage('theme');
-            const applyTheme = (mode) => {
-                document.body.setAttribute('data-theme', mode);
-                // Also set on the root element so CSS variables apply to html as well
-                document.documentElement.setAttribute('data-theme', mode);
-                if (themeToggle) themeToggle.textContent = mode === 'dark' ? '☀' : '☽';
-                themeStorage.save(mode);
-            };
-            const savedTheme = themeStorage.load() || 'light';
-            applyTheme(savedTheme);
-            if (themeToggle) {
-                themeToggle.addEventListener('click', () => {
-                    const next = document.body.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-                    applyTheme(next);
-                });
-            }
+            const theme = new Theme(themeToggle);
+            theme.init();
 
             const exportBtn = document.getElementById('export-tasks');
             const modal = document.getElementById('export-modal');
             const shareInput = document.getElementById('share-url');
             const copyBtn = document.getElementById('copy-url');
             const closeBtn = document.getElementById('close-modal');
-
-            const openModal = (url) => {
-                if (!modal || !shareInput) return;
-                shareInput.value = url;
-                modal.classList.add('open');
-                modal.setAttribute('aria-hidden', 'false');
-
-                setTimeout(() => { try { shareInput.focus(); shareInput.select(); } catch(_) {} }, 0);
-            };
-            const closeModal = () => {
-                if (!modal) return;
-                modal.classList.remove('open');
-                modal.setAttribute('aria-hidden', 'true');
-            };
-
-            if (exportBtn) {
-                exportBtn.addEventListener('click', () => {
-                    try{
-                        const payload = encodeTasksPayload(app.tasks || {});
-                        const url = `${BASE_URL}${payload}`;
-                        openModal(url);
-                    } catch(err) {
-                        console.error('Export failed:', err);
-                    }
-                });
-            }
-
-            const setCopyDefaultIcon = () => { if (copyBtn) copyBtn.innerHTML = '<img src="copy-icon.svg" alt="" class="icon-img">'; };
-            if (copyBtn && shareInput) {
-                copyBtn.addEventListener('click', async () => {
-                    try {
-                        await navigator.clipboard.writeText(shareInput.value);
-                        copyBtn.textContent = '✓';
-                        setTimeout(setCopyDefaultIcon, 1000);
-                    } catch (err) {
-                        try {
-                            shareInput.select();
-                            document.execCommand('copy');
-                            copyBtn.textContent = '✓';
-                            setTimeout(setCopyDefaultIcon, 1000);
-                        } catch(_) {}
-                    }
-                });
-            }
-            if (closeBtn) closeBtn.addEventListener('click', closeModal);
-            if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
-            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
-
-            const maybeImportFromUrl = () => {
-                try {
-                    const path = location.pathname || '';
-                    const idx = path.indexOf(BASE_PATH);
-                    if (idx === -1) return false;
-                    const rest = path.slice(idx + BASE_PATH.length).replace(/^\/+/, '');
-                    if (!rest) return false;
-                    const parsed = decodeTasksPayload(rest);
-                    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid data');
-                    app.tasks = parsed;
-                    app.storage.save(app.tasks);
-                    location.replace(BASE_URL);
-                    return true;
-                } catch (err) {
-                    console.error('URL import failed:', err);
-                    return false;
-                }
-            };
+            const share = new Share(app, BASE_URL, BASE_PATH, modal, shareInput, copyBtn, closeBtn);
+            share.init();
+            if (exportBtn) exportBtn.addEventListener('click', () => share.handleExportClick());
 
             app.render();
-            maybeImportFromUrl();
+            share.maybeImportFromUrl();
 
             // Register Service Worker for PWA/offline support
             if ('serviceWorker' in navigator) {
@@ -636,5 +664,5 @@
             });
         });
     </script>
-</body>
+    </body>
 </html>
