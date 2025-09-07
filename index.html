@@ -485,6 +485,8 @@
             const themeStorage = new JsonStorage('theme');
             const applyTheme = (mode) => {
                 document.body.setAttribute('data-theme', mode);
+                // Also set on the root element so CSS variables apply to html as well
+                document.documentElement.setAttribute('data-theme', mode);
                 if (themeToggle) themeToggle.textContent = mode === 'dark' ? '☀' : '☽';
                 themeStorage.save(mode);
             };
