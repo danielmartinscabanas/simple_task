@@ -70,7 +70,7 @@ hr { display: none; }
   margin: 0;
 }
 
-.task-row { transition: transform 150ms ease, opacity 150ms ease; will-change: transform; }
+.task-row { transition: transform 150ms ease, opacity 150ms ease; will-change: transform; touch-action: pan-y; }
 .task-row.dragging {
   opacity: 0.9;
   transform: scale(0.98);
@@ -206,6 +206,10 @@ button {
   transition: none;
   padding-right: 0px;
 }
+
+/* Copy icon image sizing + theming */
+#copy-url .icon-img { width: 18px; height: 18px; display: block; }
+:root[data-theme="dark"] #copy-url .icon-img { filter: invert(1); }
 
 .page-header #theme-toggle, .page-header #export-tasks {
   opacity: 1;
