@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Ubuntu:wght@400;500;700&display=swap');
 
 :root {
-  --bg: #f8fafc;
+  --bg: #ffffff;
   --text: #111827;
   --card-bg: #ffffff;
   --border: #e5e7eb;
@@ -11,8 +11,8 @@
   --accent: #349a79;
 }
 
-body[data-theme="dark"] {
-  --bg: #0a0a0a;
+:root[data-theme="dark"] {
+  --bg: #000000;
   --text: #e5e7eb;
   --card-bg: #000000;
   --border: #232323;
@@ -29,6 +29,9 @@ html { background: var(--bg); }
 html, body { min-height: 100vh; }
 @supports (min-height: 100svh) {
   html, body { min-height: 100svh; }
+}
+@supports (height: 100dvh) {
+  html, body { min-height: 100dvh; }
 }
 
 body {
@@ -189,6 +192,7 @@ button {
   width: 36px;
   height: 36px;
   color: var(--text);
+  background-color: var(--bg);
   font-weight: 700;
   transition: none;
   padding-right: 0px;
