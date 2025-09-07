@@ -11,10 +11,8 @@
     <div class="page-header">
         <h2>Tasks</h2>
         <div class="header-actions">
-            <button id="export-tasks" aria-label="Export tasks" title="Export tasks">⤓</button>
-            <button id="import-tasks" aria-label="Import tasks" title="Import tasks">⤒</button>
+            <button id="export-tasks" aria-label="Export tasks" title="Export tasks">↗</button>
             <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">☽</button>
-            <input id="import-file" type="file" accept="application/json" style="display:none" />
         </div>
     </div>
     <section id="todo-section">
@@ -29,6 +27,19 @@
         <hr />
         <div id="done-list"></div>
     </section>
+    <!-- Share URL Modal -->
+    <div id="export-modal" class="modal" aria-hidden="true" role="dialog">
+        <div class="modal-card" role="document">
+            <div class="modal-title">Share URL</div>
+            <div class="modal-row">
+                <input id="share-url" type="text" readonly aria-label="Share URL" />
+                <div class="modal-actions">
+                    <button id="copy-url" aria-label="Copy URL" title="Copy URL">🗎</button>
+                    <button id="close-modal" aria-label="Close" title="Close">✕</button>
+                </div>
+            </div>
+        </div>
+    </div>
     <script>
         class JsonStorage {
             constructor(storageKey){
@@ -240,6 +251,26 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            const toBase64Url = (obj) => {
+                const json = JSON.stringify(obj || {});
+                const bytes = new TextEncoder().encode(json);
+                let binary = '';
+                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
+            };
+            const fromBase64Url = (b64url) => {
+                let b64 = (b64url || '').replace(/-/g, '+').replace(/_/g, '/');
+                while (b64.length % 4) b64 += '=';
+                const binary = atob(b64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                const json = new TextDecoder().decode(bytes);
+                return JSON.parse(json);
+            };
+
+            const BASE_PATH = '/simple_task/';
+            const BASE_URL = 'https://danielmartinscabanas.github.io' + BASE_PATH;
+
             const app = new Tasks();
 
             const addInput = document.getElementById('new-task');
@@ -274,53 +305,76 @@
             }
 
             const exportBtn = document.getElementById('export-tasks');
-            const importBtn = document.getElementById('import-tasks');
-            const importFile = document.getElementById('import-file');
+            const modal = document.getElementById('export-modal');
+            const shareInput = document.getElementById('share-url');
+            const copyBtn = document.getElementById('copy-url');
+            const closeBtn = document.getElementById('close-modal');
+
+            const openModal = (url) => {
+                if (!modal || !shareInput) return;
+                shareInput.value = url;
+                modal.classList.add('open');
+                modal.setAttribute('aria-hidden', 'false');
+
+                setTimeout(() => { try { shareInput.focus(); shareInput.select(); } catch(_) {} }, 0);
+            };
+            const closeModal = () => {
+                if (!modal) return;
+                modal.classList.remove('open');
+                modal.setAttribute('aria-hidden', 'true');
+            };
 
             if (exportBtn) {
                 exportBtn.addEventListener('click', () => {
                     try{
-                        const data = JSON.stringify(app.tasks || {}, null, 2);
-                        const blob = new Blob([data], { type: 'application/json' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = 'tasks.json';
-                        document.body.appendChild(a);
-                        a.click();
-                        a.remove();
-                        URL.revokeObjectURL(url);
+                        const payload = toBase64Url(app.tasks || {});
+                        const url = `${BASE_URL}${payload}`;
+                        openModal(url);
                     } catch(err) {
                         console.error('Export failed:', err);
                     }
                 });
             }
 
-            if (importBtn && importFile) {
-                importBtn.addEventListener('click', () => importFile.click());
-                importFile.addEventListener('change', () => {
-                    const file = importFile.files && importFile.files[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        try{
-                            const parsed = JSON.parse(reader.result);
-                            if (!parsed || typeof parsed !== 'object') throw new Error('Invalid JSON');
-                            app.tasks = parsed;
-                            app.storage.save(app.tasks);
-                            app.render();
-                        } catch(err){
-                            console.error('Import failed:', err);
-                            alert('Invalid tasks file.');
-                        } finally {
-                            importFile.value = '';
-                        }
-                    };
-                    reader.readAsText(file);
+            if (copyBtn && shareInput) {
+                copyBtn.addEventListener('click', async () => {
+                    try {
+                        await navigator.clipboard.writeText(shareInput.value);
+                        copyBtn.textContent = '✓';
+                        setTimeout(() => copyBtn.textContent = '🗎', 1000);
+                    } catch (err) {
+                        try {
+                            shareInput.select();
+                            document.execCommand('copy');
+                        } catch(_) {}
+                    }
                 });
             }
+            if (closeBtn) closeBtn.addEventListener('click', closeModal);
+            if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+            document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+            const maybeImportFromUrl = () => {
+                try {
+                    const path = location.pathname || '';
+                    const idx = path.indexOf(BASE_PATH);
+                    if (idx === -1) return false;
+                    const rest = path.slice(idx + BASE_PATH.length).replace(/^\/+/, '');
+                    if (!rest) return false;
+                    const parsed = fromBase64Url(rest);
+                    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid data');
+                    app.tasks = parsed;
+                    app.storage.save(app.tasks);
+                    location.replace(BASE_URL);
+                    return true;
+                } catch (err) {
+                    console.error('URL import failed:', err);
+                    return false;
+                }
+            };
 
             app.render();
+            maybeImportFromUrl();
         });
     </script>
 </body>
