@@ -210,6 +210,80 @@
                             this.storage.save(this.tasks);
                             this.render();
                         });
+                        // Pointer-based drag with long-press + move tolerance (mobile/touch)
+                        row.addEventListener('pointerdown', (e) => {
+                            const tag = (e.target && e.target.tagName || '').toLowerCase();
+                            if (tag === 'input' || tag === 'button') return;
+                            if (e.pointerType === 'mouse') return; // desktop uses native DnD
+
+                            const HOLD_MS = 150;
+                            const TOL = 8; // px movement allowed before starting
+                            const startX = e.clientX;
+                            const startY = e.clientY;
+                            let started = false;
+                            let holdTimer = setTimeout(() => {
+                                started = true;
+                                this.draggingId = taskId;
+                                row.classList.add('dragging');
+                                try { row.setPointerCapture && row.setPointerCapture(e.pointerId); } catch (_) {}
+                            }, HOLD_MS);
+
+                            const onMove = (ev) => {
+                                if (!started) {
+                                    const dx = (ev.clientX ?? startX) - startX;
+                                    const dy = (ev.clientY ?? startY) - startY;
+                                    if (Math.hypot(dx, dy) > TOL) {
+                                        clearTimeout(holdTimer); holdTimer = null;
+                                        // user is scrolling; don't start drag
+                                    }
+                                    return;
+                                }
+                                // Actively dragging
+                                ev.preventDefault && ev.preventDefault();
+                                const dragging = row;
+                                const rows = Array.from(todoList.querySelectorAll('.task-row'));
+                                const prev = new Map(rows.map(el => [el.dataset.id, el.getBoundingClientRect().top]));
+                                const afterElement = getDragAfterElement(todoList, ev.clientY);
+                                if (afterElement == null) {
+                                    todoList.appendChild(dragging);
+                                } else if (afterElement !== dragging) {
+                                    todoList.insertBefore(dragging, afterElement);
+                                }
+                                const newRows = Array.from(todoList.querySelectorAll('.task-row'));
+                                newRows.forEach(el => {
+                                    if (el === dragging) return;
+                                    const oldTop = prev.get(el.dataset.id);
+                                    if (oldTop == null) return;
+                                    const newTop = el.getBoundingClientRect().top;
+                                    const dy2 = oldTop - newTop;
+                                    if (dy2 !== 0) {
+                                        el.style.transition = 'none';
+                                        el.style.transform = `translateY(${dy2}px)`;
+                                        requestAnimationFrame(() => {
+                                            el.style.transition = 'transform 150ms ease';
+                                            el.style.transform = '';
+                                        });
+                                    }
+                                });
+                            };
+                            const onUp = () => {
+                                if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
+                                if (started) {
+                                    row.classList.remove('dragging');
+                                    this.draggingId = null;
+                                    const orderIds = Array.from(todoList.querySelectorAll('.task-row')).map(el => el.dataset.id);
+                                    orderIds.forEach((id, idx) => { if (this.tasks[id]) this.tasks[id].order = idx; });
+                                    this.storage.save(this.tasks);
+                                    this.render();
+                                }
+                                window.removeEventListener('pointermove', onMove, true);
+                                window.removeEventListener('pointerup', onUp, true);
+                                window.removeEventListener('pointercancel', onUp, true);
+                            };
+                            window.addEventListener('pointermove', onMove, true);
+                            window.addEventListener('pointerup', onUp, true);
+                            window.addEventListener('pointercancel', onUp, true);
+                        });
                         todoList.appendChild(row);
                     }
                 }
