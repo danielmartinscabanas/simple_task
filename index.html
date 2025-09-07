@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="styles.css">
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ctext y='50%25' x='50%25' dominant-baseline='middle' text-anchor='middle' font-size='52'%3E%E2%9C%85%3C/text%3E%3C/svg%3E">
+    <link rel="manifest" href="manifest.webmanifest">
+    <meta name="theme-color" content="#349a79">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <title>Tasks</title>
 </head>
 <body>
@@ -39,6 +44,12 @@
                 </div>
             </div>
         </div>
+    </div>
+    <!-- Minimal Install Banner (mobile only) -->
+    <div id="install-banner" class="install-banner" aria-hidden="true">
+        <span>Install app?</span>
+        <button id="install-cta" aria-label="Install app" title="Install">Install</button>
+        <button id="install-close" aria-label="Dismiss" title="Dismiss">✕</button>
     </div>
     <script>
         class JsonStorage {
@@ -251,19 +262,127 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            const toBase64Url = (obj) => {
-                const json = JSON.stringify(obj || {});
-                const bytes = new TextEncoder().encode(json);
+            // URL-safe Base64 and LZW compression helpers
+            const bytesToBase64Url = (bytes) => {
                 let binary = '';
                 for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
                 return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
             };
-            const fromBase64Url = (b64url) => {
+            const base64UrlToBytes = (b64url) => {
                 let b64 = (b64url || '').replace(/-/g, '+').replace(/_/g, '/');
                 while (b64.length % 4) b64 += '=';
                 const binary = atob(b64);
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+                const out = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+                return out;
+            };
+            // LZW (12-bit) compression over UTF-8 bytes
+            const lzwCompress = (bytes) => {
+                const CLEAR = 4095;
+                let dict = new Map();
+                for (let i = 0; i < 256; i++) dict.set(String.fromCharCode(i), i);
+                let dictSize = 256;
+                let w = '';
+                const codes = [];
+                for (let i = 0; i < bytes.length; i++) {
+                    const c = String.fromCharCode(bytes[i]);
+                    const wc = w + c;
+                    if (dict.has(wc)) {
+                        w = wc;
+                    } else {
+                        codes.push(dict.get(w));
+                        dict.set(wc, dictSize++);
+                        if (dictSize >= CLEAR) {
+                            codes.push(CLEAR);
+                            dict = new Map();
+                            for (let j = 0; j < 256; j++) dict.set(String.fromCharCode(j), j);
+                            dictSize = 256;
+                        }
+                        w = c;
+                    }
+                }
+                if (w !== '') codes.push(dict.get(w));
+
+                // Pack 12-bit codes
+                const out = [];
+                let bitBuffer = 0, bitCount = 0;
+                for (let k = 0; k < codes.length; k++) {
+                    const code = codes[k] & 0x0fff;
+                    bitBuffer |= (code << bitCount);
+                    bitCount += 12;
+                    while (bitCount >= 8) {
+                        out.push(bitBuffer & 0xff);
+                        bitBuffer >>= 8;
+                        bitCount -= 8;
+                    }
+                }
+                if (bitCount > 0) out.push(bitBuffer & 0xff);
+                return new Uint8Array(out);
+            };
+            const lzwDecompress = (packed) => {
+                const CLEAR = 4095;
+                // Unpack 12-bit codes
+                const codes = [];
+                let bitBuffer = 0, bitCount = 0;
+                for (let i = 0; i < packed.length; i++) {
+                    bitBuffer |= (packed[i] << bitCount);
+                    bitCount += 8;
+                    while (bitCount >= 12) {
+                        const code = bitBuffer & 0x0fff;
+                        codes.push(code);
+                        bitBuffer >>= 12;
+                        bitCount -= 12;
+                    }
+                }
+                const reset = () => {
+                    const dict = [];
+                    for (let i = 0; i < 256; i++) dict[i] = String.fromCharCode(i);
+                    return { dict, size: 256 };
+                };
+                let { dict, size } = reset();
+                let w = '';
+                let result = '';
+                for (let i = 0; i < codes.length; i++) {
+                    const k = codes[i];
+                    if (k === CLEAR) { ({ dict, size } = reset()); w = ''; continue; }
+                    let entry;
+                    if (k < size) entry = dict[k];
+                    else if (k === size && w) entry = w + w[0];
+                    else return new Uint8Array(0);
+                    result += entry;
+                    if (w) dict[size++] = w + entry[0];
+                    w = entry;
+                }
+                const out = new Uint8Array(result.length);
+                for (let i = 0; i < result.length; i++) out[i] = result.charCodeAt(i) & 0xff;
+                return out;
+            };
+            const encodeTasksPayload = (obj) => {
+                const json = JSON.stringify(obj || {});
+                const utf8 = new TextEncoder().encode(json);
+                const plain = bytesToBase64Url(utf8);
+                const compressed = bytesToBase64Url(lzwCompress(utf8));
+                return (compressed.length + 2 < plain.length ? 'c~' + compressed : 'p~' + plain);
+            };
+            const decodeTasksPayload = (payload) => {
+                if (!payload) throw new Error('Empty payload');
+                const sep = payload.indexOf('~');
+                if (sep > 0 && sep < 4) {
+                    const mode = payload.slice(0, sep);
+                    const body = payload.slice(sep + 1);
+                    if (mode === 'c') {
+                        const bytes = base64UrlToBytes(body);
+                        const dec = lzwDecompress(bytes);
+                        const json = new TextDecoder().decode(dec);
+                        return JSON.parse(json);
+                    } else if (mode === 'p') {
+                        const bytes = base64UrlToBytes(body);
+                        const json = new TextDecoder().decode(bytes);
+                        return JSON.parse(json);
+                    }
+                }
+                // Back-compat: treat as plain base64 JSON
+                const bytes = base64UrlToBytes(payload);
                 const json = new TextDecoder().decode(bytes);
                 return JSON.parse(json);
             };
@@ -327,7 +446,7 @@
             if (exportBtn) {
                 exportBtn.addEventListener('click', () => {
                     try{
-                        const payload = toBase64Url(app.tasks || {});
+                        const payload = encodeTasksPayload(app.tasks || {});
                         const url = `${BASE_URL}${payload}`;
                         openModal(url);
                     } catch(err) {
@@ -361,7 +480,7 @@
                     if (idx === -1) return false;
                     const rest = path.slice(idx + BASE_PATH.length).replace(/^\/+/, '');
                     if (!rest) return false;
-                    const parsed = fromBase64Url(rest);
+                    const parsed = decodeTasksPayload(rest);
                     if (!parsed || typeof parsed !== 'object') throw new Error('Invalid data');
                     app.tasks = parsed;
                     app.storage.save(app.tasks);
@@ -375,6 +494,60 @@
 
             app.render();
             maybeImportFromUrl();
+
+            // Register Service Worker for PWA/offline support
+            if ('serviceWorker' in navigator) {
+                const scope = '/simple_task/';
+                navigator.serviceWorker.register('sw.js', { scope }).catch(err => {
+                    console.warn('SW registration failed:', err);
+                });
+            }
+
+            // Minimal Install Banner (Android/desktop with beforeinstallprompt)
+            const installBanner = document.getElementById('install-banner');
+            const installBtn = document.getElementById('install-cta');
+            const installClose = document.getElementById('install-close');
+            let deferredPrompt = null;
+
+            const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+            const isMobile = () => (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+            const showInstallBanner = () => {
+                if (!installBanner) return;
+                installBanner.classList.add('show');
+                installBanner.setAttribute('aria-hidden', 'false');
+            };
+            const hideInstallBanner = () => {
+                if (!installBanner) return;
+                installBanner.classList.remove('show');
+                installBanner.setAttribute('aria-hidden', 'true');
+            };
+
+            window.addEventListener('beforeinstallprompt', (e) => {
+                // Only show on mobile, not if already installed, and not if dismissed
+                if (isStandalone() || !isMobile() || localStorage.getItem('installBannerDismissed') === '1') return;
+                e.preventDefault();
+                deferredPrompt = e;
+                showInstallBanner();
+            });
+            window.addEventListener('appinstalled', () => {
+                deferredPrompt = null;
+                hideInstallBanner();
+                localStorage.setItem('installBannerDismissed', '1');
+            });
+            if (installBtn) installBtn.addEventListener('click', async () => {
+                try {
+                    if (!deferredPrompt) return hideInstallBanner();
+                    deferredPrompt.prompt();
+                    const { outcome } = await deferredPrompt.userChoice;
+                    deferredPrompt = null;
+                    hideInstallBanner();
+                    if (outcome !== 'accepted') localStorage.setItem('installBannerDismissed', '1');
+                } catch (_) { hideInstallBanner(); }
+            });
+            if (installClose) installClose.addEventListener('click', () => {
+                localStorage.setItem('installBannerDismissed', '1');
+                hideInstallBanner();
+            });
         });
     </script>
 </body>
