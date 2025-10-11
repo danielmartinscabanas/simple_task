@@ -110,10 +110,16 @@ section > * + * { margin-top: 6px; margin-bottom: 0; }
   margin: 0;
 }
 
+#todo-list > div span,
+#done-list > div span {
+  flex: 1;
+  min-width: 0;
+}
+
 .task-row {
   transition: transform 150ms ease, opacity 150ms ease;
   will-change: transform;
-  touch-action: none;
+  touch-action: manipulation;
 }
 .task-row.dragging {
   opacity: 0.9;
@@ -218,10 +224,6 @@ button {
   opacity: 0;
   pointer-events: none;
   transition: opacity 1000ms ease, color 1000ms ease;
-}
-#todo-list > div button[aria-label="Edit task"],
-#done-list > div button[aria-label="Edit task"] {
-  margin-left: auto;
 }
 #todo-list > div:hover button,
 #todo-list > div:focus-within button,

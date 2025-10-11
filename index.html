@@ -206,13 +206,19 @@
                         const editInput = document.createElement('input');
                         editInput.type = 'text';
                         editInput.value = item.task;
+                        const saveEdit = () => {
+                            const newText = (editInput.value || '').trim();
+                            if (newText && this.edit(taskId, newText)) {
+                                this.render();
+                            }
+                        };
                         editInput.addEventListener('keydown', (e) => {
                             if (e.key === 'Enter') {
-                                const newText = (editInput.value || '').trim();
-                                if (newText && this.edit(taskId, newText)) {
-                                    this.render();
-                                }
+                                saveEdit();
                             }
+                        });
+                        editInput.addEventListener('blur', () => {
+                            saveEdit();
                         });
                         row.replaceChild(editInput, text);
                         editInput.focus();
