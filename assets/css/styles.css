@@ -114,10 +114,6 @@ section > * + * { margin-top: 6px; margin-bottom: 0; }
 #done-list > div span {
   flex: 1;
   min-width: 0;
-  user-select: none;
-  -webkit-user-select: none;
-  touch-action: none;
-  pointer-events: none;
 }
 
 .task-row {
