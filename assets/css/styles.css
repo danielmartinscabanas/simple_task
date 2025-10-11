@@ -119,7 +119,7 @@ section > * + * { margin-top: 6px; margin-bottom: 0; }
 .task-row {
   transition: transform 150ms ease, opacity 150ms ease;
   will-change: transform;
-  touch-action: manipulation;
+  touch-action: auto;
 }
 .task-row.dragging {
   opacity: 0.9;
