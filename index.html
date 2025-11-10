@@ -90,7 +90,7 @@
                     const taskId = crypto.randomUUID();
                     const existing = this.tasks || {};
                     const maxOrder = Math.max(-1, ...Object.values(existing).map(t => (t && typeof t.order === 'number') ? t.order : -1));
-                    const newTask = {"task": text, "done": false, "order": maxOrder + 1};
+                    const newTask = {"task": text, "done": false, "order": maxOrder + 1, "subtasks": [], "collapsed": false};
                     this.tasks[taskId] = newTask;
                     this.storage.save(this.tasks);
                     console.log(`Task '${text}' created.`);
@@ -106,6 +106,7 @@
 
             remove(taskId){
                 try {
+                    // Simply delete the task - subtasks are nested within it and will be deleted automatically
                     delete this.tasks[taskId];
                     this.storage.save(this.tasks);
                     console.log(`Task '${taskId}' removed.`);
@@ -120,7 +121,17 @@
 
             done(taskId){
                 try{
+                    const task = this.tasks[taskId];
                     this.tasks[taskId]["done"] = true;
+
+                    // Mark all nested subtasks as done too
+                    if (task && task.subtasks && task.subtasks.length > 0) {
+                        task.subtasks.forEach(subtask => {
+                            subtask.done = true;
+                            console.log(`Subtask marked as done (cascade from parent task).`);
+                        });
+                    }
+
                     this.storage.save(this.tasks);
                     console.log(`Task '${taskId}' marked as done.`);
 
@@ -134,7 +145,17 @@
 
             undone(taskId){
                 try{
+                    const task = this.tasks[taskId];
                     this.tasks[taskId]["done"] = false;
+
+                    // Mark all nested subtasks as undone too
+                    if (task && task.subtasks && task.subtasks.length > 0) {
+                        task.subtasks.forEach(subtask => {
+                            subtask.done = false;
+                            console.log(`Subtask marked as undone (cascade from parent task).`);
+                        });
+                    }
+
                     this.storage.save(this.tasks);
                     console.log(`Task '${taskId}' marked as undone.`);
 
@@ -160,7 +181,84 @@
                 }
             }
 
+            toggleSubTask(taskId, parentId){
+                try{
+                    // Find if this task is currently in someone's subtasks array
+                    let currentParent = null;
+                    let subtaskIndex = -1;
+
+                    for (const [id, t] of Object.entries(this.tasks)) {
+                        if (t.subtasks && Array.isArray(t.subtasks)) {
+                            const idx = t.subtasks.findIndex(st => st.id === taskId);
+                            if (idx !== -1) {
+                                currentParent = id;
+                                subtaskIndex = idx;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (currentParent) {
+                        // Task is currently a subtask - promote to root level
+                        const subtaskData = this.tasks[currentParent].subtasks[subtaskIndex];
+                        this.tasks[currentParent].subtasks.splice(subtaskIndex, 1);
+
+                        // Add as root-level task positioned right after the parent
+                        const parentOrder = this.tasks[currentParent].order;
+
+                        // Shift orders of all tasks that come after the parent
+                        Object.values(this.tasks).forEach(t => {
+                            if (t && typeof t.order === 'number' && t.order > parentOrder) {
+                                t.order += 1;
+                            }
+                        });
+
+                        this.tasks[taskId] = {
+                            task: subtaskData.task,
+                            done: subtaskData.done,
+                            order: parentOrder + 1,
+                            subtasks: [],
+                            collapsed: false
+                        };
+                        console.log(`Task '${taskId}' promoted to root level.`);
+                    } else {
+                        // Task is at root level - demote to subtask of parent
+                        if (!parentId || !this.tasks[parentId]) {
+                            console.error('No valid parent task found to nest under.');
+                            return false;
+                        }
+
+                        const task = this.tasks[taskId];
+                        if (!task) {
+                            console.error('Task not found at root level.');
+                            return false;
+                        }
+
+                        const taskData = { ...task, id: taskId };
+                        delete taskData.order;  // Subtasks don't need order
+                        delete taskData.subtasks;  // Subtasks can't have subtasks
+                        delete taskData.collapsed;  // Subtasks don't need collapsed state
+
+                        if (!this.tasks[parentId].subtasks) {
+                            this.tasks[parentId].subtasks = [];
+                        }
+                        this.tasks[parentId].subtasks.push(taskData);
+
+                        delete this.tasks[taskId];  // Remove from root level
+                        console.log(`Task '${taskId}' demoted to subtask of '${parentId}'.`);
+                    }
+
+                    this.storage.save(this.tasks);
+                    return true;
+                } catch(err){
+                    console.error(`An error occurred on toggling subTask for task '${taskId}':`, err.message);
+                    return false;
+                }
+            }
+
             render(){
+
+
                 const todoList = document.getElementById('todo-list');
                 const doneList = document.getElementById('done-list');
                 const doneSection = document.getElementById('done-section');
@@ -170,228 +268,365 @@
                 doneList.innerHTML = '';
 
                 const entries = (this.tasks && typeof this.tasks === 'object') ? Object.entries(this.tasks) : [];
-                entries.sort((a,b) => {
-                    const ao = (a[1] && typeof a[1].order === 'number') ? a[1].order : 0;
-                    const bo = (b[1] && typeof b[1].order === 'number') ? b[1].order : 0;
-                    return ao - bo;
-                });
+            entries.sort((a,b) => {
+                const ao = (a[1] && typeof a[1].order === 'number') ? a[1].order : 0;
+                const bo = (b[1] && typeof b[1].order === 'number') ? b[1].order : 0;
+                return ao - bo;
+            });
                 let hasDone = false;
 
-                for (const [taskId, item] of entries){
-                    const row = document.createElement('div');
-                    row.className = 'task-row';
-                    row.dataset.id = taskId;
+                // Helper: Check if all subtasks are done
+                const areAllSubtasksDone = (task) => {
+                if (!task.subtasks || task.subtasks.length === 0) return true;
+                return task.subtasks.every(st => st.done);
+            };
 
-                    const checkbox = document.createElement('input');
-                    checkbox.type = 'checkbox';
-                    checkbox.checked = !!item.done;
-                    checkbox.addEventListener('change', () => {
-                        if (checkbox.checked) {
-                            this.done(taskId);
-                        } else {
-                            this.undone(taskId);
+                // Helper: Find parent task ID for a given task (searches subtasks arrays)
+                const findParentId = (targetId) => {
+                for (const [id, task] of entries) {
+            if (task.subtasks && task.subtasks.some(st => st.id === targetId)) {
+                return id;
+            }
+            }
+                return null;
+            };
+
+                // Helper function to create a task row (works for both parent and subtask)
+                const createTaskRow = (taskId, taskData, isSubtask, parentId, isFirstRootTask = false) => {
+                const row = document.createElement('div');
+            row.className = 'task-row';
+            row.dataset.id = taskId;
+                if (parentId) row.dataset.parentId = parentId;
+
+                // Add indentation for subtasks (includes space for toggle button + standard indent)
+                if (isSubtask) {
+            row.style.paddingLeft = '48px'; // 24px for toggle button space + 24px for indent
+            }
+
+                const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = !!taskData.done;
+                if (isSubtask) {
+            checkbox.classList.add('subtask-checkbox');
+            }
+            checkbox.addEventListener('change', () => {
+            if (!isSubtask) {
+                // Parent task checkbox
+                if (checkbox.checked) {
+                    this.done(taskId);
+                } else {
+                    this.undone(taskId);
+                }
+            } else {
+                // Subtask checkbox - update within parent's subtasks array
+                const parent = this.tasks[parentId];
+                if (parent) {
+                    const subtask = parent.subtasks.find(st => st.id === taskId);
+                    if (subtask) {
+                        subtask.done = checkbox.checked;
+
+                        // If subtask is unchecked, uncheck the parent too
+                        if (!checkbox.checked && parent.done) {
+                            parent.done = false;
                         }
-                        setTimeout(() => this.render(), 140);
-                    });
 
-                    const text = document.createElement('span');
-                    text.textContent = ` ${item.task} `;
+                        this.storage.save(this.tasks);
+                    }
+                }
+            }
+            setTimeout(() => this.render(), 140);
+            });
 
-                    const editBtn = document.createElement('button');
-                    editBtn.textContent = '🖋';
-                    editBtn.setAttribute('aria-label', 'Edit task');
-                    editBtn.setAttribute('title', 'Edit task');
-                    editBtn.style.fontSize = '12px';
-                    editBtn.addEventListener('click', () => {
-                        const editInput = document.createElement('input');
-                        editInput.type = 'text';
-                        editInput.value = item.task;
-                        const saveEdit = () => {
-                            const newText = (editInput.value || '').trim();
-                            if (newText && this.edit(taskId, newText)) {
+                const text = document.createElement('span');
+            text.textContent = ` ${taskData.task} `;
+                if (isSubtask) {
+            text.classList.add('subtask-text');
+            }
+
+                const editBtn = document.createElement('button');
+            editBtn.textContent = '🖋';
+            editBtn.setAttribute('aria-label', 'Edit task');
+            editBtn.setAttribute('title', 'Edit task');
+            editBtn.style.fontSize = '12px';
+            editBtn.addEventListener('click', () => {
+            const editInput = document.createElement('input');
+            editInput.type = 'text';
+            editInput.value = taskData.task;
+            editInput.style.flex = '1';
+
+            // Save only on Enter key press
+            editInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    const newText = (editInput.value || '').trim();
+                    if (newText) {
+                        if (!isSubtask) {
+                            if (this.edit(taskId, newText)) {
                                 this.render();
                             }
-                        };
-                        editInput.addEventListener('keydown', (e) => {
-                            if (e.key === 'Enter') {
-                                saveEdit();
-                            }
-                        });
-                        editInput.addEventListener('blur', () => {
-                            saveEdit();
-                        });
-                        row.replaceChild(editInput, text);
-                        editInput.focus();
-                        editInput.select();
-                    });
-
-                    const removeBtn = document.createElement('button');
-                    removeBtn.textContent = '🗑';
-                    removeBtn.setAttribute('aria-label', 'Remove task');
-                    removeBtn.setAttribute('title', 'Remove task');
-                    removeBtn.style.fontSize = '12px';
-                    removeBtn.addEventListener('click', () => {
-                        this.remove(taskId);
-                        this.render();
-                    });
-
-                    row.appendChild(checkbox);
-                    row.appendChild(text);
-                    row.appendChild(editBtn);
-                    row.appendChild(removeBtn);
-
-                    if (item.done) {
-                        hasDone = true;
-                        doneList.appendChild(row);
-                    } else {
-                        row.draggable = true;
-                        row.addEventListener('dragstart', (e) => {
-                            this.draggingId = taskId;
-                            row.classList.add('dragging');
-                            if (e.dataTransfer) {
-                                e.dataTransfer.effectAllowed = 'move';
-                                e.dataTransfer.setData('text/plain', taskId);
-                            }
-                        });
-                        row.addEventListener('dragend', () => {
-                            row.classList.remove('dragging');
-                            this.draggingId = null;
-                            const orderIds = Array.from(todoList.querySelectorAll('.task-row')).map(el => el.dataset.id);
-                            orderIds.forEach((id, idx) => { if (this.tasks[id]) this.tasks[id].order = idx; });
-                            this.storage.save(this.tasks);
-                            this.render();
-                        });
-                        // Pointer-based drag with long-press + move tolerance (mobile/touch)
-                        row.addEventListener('pointerdown', (e) => {
-                            const tag = (e.target && e.target.tagName || '').toLowerCase();
-                            if (tag === 'input' || tag === 'button') return;
-                            if (e.pointerType === 'mouse') return; // desktop uses native DnD
-
-                            const HOLD_MS = 200;
-                            const TOL = 10; // px movement allowed before starting
-                            const startX = e.clientX;
-                            const startY = e.clientY;
-                            let started = false;
-                            let cancelled = false;
-                            const pointerId = e.pointerId;
-
-                            let holdTimer = setTimeout(() => {
-                                if (!cancelled) {
-                                    started = true;
-                                    this.draggingId = taskId;
-                                    row.classList.add('dragging');
-                                    // Capture pointer NOW that drag has started
-                                    try { row.setPointerCapture && row.setPointerCapture(pointerId); } catch (_) {}
-                                }
-                            }, HOLD_MS);
-
-                            const onMove = (ev) => {
-                                if (!started) {
-                                    const dx = (ev.clientX ?? startX) - startX;
-                                    const dy = (ev.clientY ?? startY) - startY;
-                                    if (Math.hypot(dx, dy) > TOL) {
-                                        cancelled = true;
-                                        clearTimeout(holdTimer); holdTimer = null;
-                                        window.removeEventListener('pointermove', onMove, true);
-                                        window.removeEventListener('pointerup', onUp, true);
-                                        window.removeEventListener('pointercancel', onUp, true);
-                                    }
-                                    return;
-                                }
-                                // Actively dragging
-                                ev.preventDefault && ev.preventDefault();
-                                const dragging = row;
-                                const rows = Array.from(todoList.querySelectorAll('.task-row'));
-                                const prev = new Map(rows.map(el => [el.dataset.id, el.getBoundingClientRect().top]));
-                                const afterElement = getDragAfterElement(todoList, ev.clientY);
-                                if (afterElement == null) {
-                                    todoList.appendChild(dragging);
-                                } else if (afterElement !== dragging) {
-                                    todoList.insertBefore(dragging, afterElement);
-                                }
-                                const newRows = Array.from(todoList.querySelectorAll('.task-row'));
-                                newRows.forEach(el => {
-                                    if (el === dragging) return;
-                                    const oldTop = prev.get(el.dataset.id);
-                                    if (oldTop == null) return;
-                                    const newTop = el.getBoundingClientRect().top;
-                                    const dy2 = oldTop - newTop;
-                                    if (dy2 !== 0) {
-                                        el.style.transition = 'none';
-                                        el.style.transform = `translateY(${dy2}px)`;
-                                        requestAnimationFrame(() => {
-                                            el.style.transition = 'transform 150ms ease';
-                                            el.style.transform = '';
-                                        });
-                                    }
-                                });
-                            };
-                            const onUp = () => {
-                                if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
-                                if (started) {
-                                    row.classList.remove('dragging');
-                                    this.draggingId = null;
-                                    try { row.releasePointerCapture && row.releasePointerCapture(pointerId); } catch (_) {}
-                                    const orderIds = Array.from(todoList.querySelectorAll('.task-row')).map(el => el.dataset.id);
-                                    orderIds.forEach((id, idx) => { if (this.tasks[id]) this.tasks[id].order = idx; });
+                        } else {
+                            // Update subtask text
+                            const parent = this.tasks[parentId];
+                            if (parent) {
+                                const subtask = parent.subtasks.find(st => st.id === taskId);
+                                if (subtask) {
+                                    subtask.task = newText;
                                     this.storage.save(this.tasks);
                                     this.render();
                                 }
-                                window.removeEventListener('pointermove', onMove, true);
-                                window.removeEventListener('pointerup', onUp, true);
-                                window.removeEventListener('pointercancel', onUp, true);
-                            };
-                            window.addEventListener('pointermove', onMove, { capture: true, passive: false });
-                            window.addEventListener('pointerup', onUp, true);
-                            window.addEventListener('pointercancel', onUp, true);
-                        });
-                        todoList.appendChild(row);
+                            }
+                        }
                     }
                 }
-                const getDragAfterElement = (container, y) => {
-                    const els = [...container.querySelectorAll('.task-row:not(.dragging)')];
-                    return els.reduce((closest, child) => {
-                        const box = child.getBoundingClientRect();
-                        const offset = y - box.top - box.height / 2;
-                        if (offset < 0 && offset > closest.offset) {
-                            return { offset, element: child };
+            });
+
+            row.replaceChild(editInput, text);
+            editInput.focus();
+            editInput.select();
+            });
+
+                // Add subtask toggle button (for converting to/from subtask)
+                // Only show if: it's a subtask OR it's a parent task WITHOUT subtasks
+                const subTaskToggleBtn = document.createElement('button');
+                subTaskToggleBtn.textContent = isSubtask ? '⤶' : '⤷';
+                subTaskToggleBtn.className = 'subtask-edit-toggle';
+                subTaskToggleBtn.setAttribute('aria-label', 'Toggle subtask mode');
+                subTaskToggleBtn.setAttribute('title', 'Toggle subtask mode');
+
+                // Hide button for parent tasks with subtasks OR if it's the first root task
+                if ((!isSubtask && taskData.subtasks && taskData.subtasks.length > 0) || (!isSubtask && isFirstRootTask)) {
+                    subTaskToggleBtn.style.display = 'none';
+                }
+
+                if (isSubtask) {
+                    subTaskToggleBtn.classList.add('active');
+                }
+                subTaskToggleBtn.addEventListener('click', () => {
+                    setTimeout(() => {
+                        // Toggle between subtask and parent
+                        if (isSubtask) {
+                            this.toggleSubTask(taskId, null); // Promote to root
                         } else {
-                            return closest;
+                            // Find the previous task to use as parent
+                            const allRows = Array.from(todoList.querySelectorAll('.task-row'));
+                            const currentIndex = allRows.findIndex(r => r.dataset.id === taskId);
+                            if (currentIndex > 0) {
+                                const prevRow = allRows[currentIndex - 1];
+                                const prevId = prevRow.dataset.parentId || prevRow.dataset.id;
+                                this.toggleSubTask(taskId, prevId); // Demote to subtask
+                            }
                         }
-                    }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
-                };
-                todoList.addEventListener('dragover', (e) => {
+                        this.render();
+                    }, 300);
+                });
+
+                const removeBtn = document.createElement('button');
+            removeBtn.textContent = '🗑';
+            removeBtn.setAttribute('aria-label', 'Remove task');
+            removeBtn.setAttribute('title', 'Remove task');
+            removeBtn.style.fontSize = '12px';
+            removeBtn.addEventListener('click', () => {
+            if (!isSubtask) {
+                this.remove(taskId);
+            } else {
+                // Remove subtask from parent's array
+                const parent = this.tasks[parentId];
+                if (parent) {
+                    parent.subtasks = parent.subtasks.filter(st => st.id !== taskId);
+                    this.storage.save(this.tasks);
+                }
+            }
+            this.render();
+            });
+
+            // Add toggle button only for parent tasks that have subtasks
+            if (!isSubtask && taskData.subtasks && taskData.subtasks.length > 0) {
+                const toggleBtn = document.createElement('button');
+                toggleBtn.textContent = '▸';
+                toggleBtn.className = 'subtask-toggle';
+                toggleBtn.setAttribute('aria-label', 'Toggle subtasks');
+                toggleBtn.setAttribute('title', 'Toggle subtasks');
+
+                if (!taskData.collapsed) {
+                    toggleBtn.classList.add('expanded');
+                }
+
+                toggleBtn.addEventListener('click', (e) => {
                     e.preventDefault();
-                    const dragging = todoList.querySelector('.task-row.dragging');
-                    if (!dragging) return;
+                    e.stopPropagation();
 
-                    const rows = Array.from(todoList.querySelectorAll('.task-row'));
-                    const prev = new Map(rows.map(el => [el.dataset.id, el.getBoundingClientRect().top]));
+                    const task = this.tasks[taskId];
+                    if (task) {
+                        const isCurrentlyCollapsed = task.collapsed;
 
-                    const afterElement = getDragAfterElement(todoList, e.clientY);
-                    if (afterElement == null) {
-                        todoList.appendChild(dragging);
-                    } else {
-                        todoList.insertBefore(dragging, afterElement);
-                    }
+                        // Toggle the rotation class immediately for smooth animation
+                        toggleBtn.classList.toggle('expanded');
 
-                    const newRows = Array.from(todoList.querySelectorAll('.task-row'));
-                    newRows.forEach(el => {
-                        if (el === dragging) return;
-                        const oldTop = prev.get(el.dataset.id);
-                        if (oldTop == null) return;
-                        const newTop = el.getBoundingClientRect().top;
-                        const dy = oldTop - newTop;
-                        if (dy !== 0) {
-                            el.style.transition = 'none';
-                            el.style.transform = `translateY(${dy}px)`;
+                        if (!isCurrentlyCollapsed) {
+                            // Collapsing: animate subtasks out first
+                            const subtaskRows = document.querySelectorAll(`[data-parent-id="${taskId}"]`);
+                            subtaskRows.forEach(subtaskRow => {
+                                subtaskRow.style.transition = 'max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease, padding 0.3s ease';
+                                subtaskRow.style.maxHeight = '0';
+                                subtaskRow.style.opacity = '0';
+                                subtaskRow.style.marginTop = '0';
+                                subtaskRow.style.marginBottom = '0';
+                                subtaskRow.style.paddingTop = '0';
+                                subtaskRow.style.paddingBottom = '0';
+                            });
+
+                            setTimeout(() => {
+                                task.collapsed = true;
+                                this.storage.save(this.tasks);
+                                this.render();
+                            }, 300);
+                        } else {
+                            // Expanding: update state and render, then animate in
+                            task.collapsed = false;
+                            this.storage.save(this.tasks);
+                            this.render();
+
+                            // After render, animate the newly visible subtasks
                             requestAnimationFrame(() => {
-                                el.style.transition = 'transform 150ms ease';
-                                el.style.transform = '';
+                                const subtaskRows = document.querySelectorAll(`[data-parent-id="${taskId}"]`);
+                                subtaskRows.forEach(subtaskRow => {
+                                    // Start with collapsed state
+                                    subtaskRow.style.maxHeight = '0';
+                                    subtaskRow.style.opacity = '0';
+                                    subtaskRow.style.marginTop = '0';
+                                    subtaskRow.style.marginBottom = '0';
+
+                                    // Force a reflow
+                                    subtaskRow.offsetHeight;
+
+                                    // Apply transition
+                                    subtaskRow.style.transition = 'max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease';
+
+                                    // Animate to expanded state
+                                    subtaskRow.style.maxHeight = '60px';
+                                    subtaskRow.style.opacity = '1';
+                                    subtaskRow.style.marginTop = '';
+                                    subtaskRow.style.marginBottom = '';
+                                });
                             });
                         }
-                    });
+                    }
                 });
+
+                row.appendChild(toggleBtn);
+            }
+
+            row.appendChild(checkbox);
+            row.appendChild(text);
+            row.appendChild(subTaskToggleBtn);
+            row.appendChild(editBtn);
+            row.appendChild(removeBtn);
+
+                return row;
+            };
+
+                // Render all tasks
+                let firstRootTaskRendered = false;
+                for (const [taskId, task] of entries){
+                // Determine if task group should be in Done section
+                const allDone = task.done && areAllSubtasksDone(task);
+
+                if (allDone) {
+            // Parent and all subtasks go to Done
+            hasDone = true;
+            const parentRow = createTaskRow(taskId, task, false, null, false);
+            doneList.appendChild(parentRow);
+
+            // Render subtasks in Done (only if not collapsed)
+            if (task.subtasks && task.subtasks.length > 0 && !task.collapsed) {
+                task.subtasks.forEach(subtask => {
+                    const subtaskRow = createTaskRow(subtask.id, subtask, true, taskId, false);
+                    doneList.appendChild(subtaskRow);
+                });
+            }
+            } else {
+            // Parent and subtasks stay in To Do
+            const isFirstRootTask = !firstRootTaskRendered;
+            firstRootTaskRendered = true;
+            const parentRow = createTaskRow(taskId, task, false, null, isFirstRootTask);
+            todoList.appendChild(parentRow);
+            parentRow.draggable = true;
+
+            // Add drag-and-drop for parent tasks
+            parentRow.addEventListener('dragstart', (e) => {
+                this.draggingId = taskId;
+                parentRow.classList.add('dragging');
+                if (e.dataTransfer) {
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', taskId);
+                }
+            });
+            parentRow.addEventListener('dragend', () => {
+                parentRow.classList.remove('dragging');
+                this.draggingId = null;
+                const orderIds = Array.from(todoList.querySelectorAll('.task-row[data-parent-id=""],.task-row:not([data-parent-id])')).map(el => el.dataset.id);
+                orderIds.forEach((id, idx) => { if (this.tasks[id]) this.tasks[id].order = idx; });
+                this.storage.save(this.tasks);
+                this.render();
+            });
+
+            // Render subtasks (only if not collapsed)
+            if (task.subtasks && task.subtasks.length > 0 && !task.collapsed) {
+                task.subtasks.forEach(subtask => {
+                    const subtaskRow = createTaskRow(subtask.id, subtask, true, taskId, false);
+                    todoList.appendChild(subtaskRow);
+                });
+            }
+            }
+            }
+
+                // Drag helper function
+                const getDragAfterElement = (container, y) => {
+                const els = [...container.querySelectorAll('.task-row:not(.dragging):not([data-parent-id])')];
+                return els.reduce((closest, child) => {
+            const box = child.getBoundingClientRect();
+            const offset = y - box.top - box.height / 2;
+            if (offset < 0 && offset > closest.offset) {
+                return { offset, element: child };
+            } else {
+                return closest;
+            }
+            }, { offset: Number.NEGATIVE_INFINITY, element: null }).element;
+            };
+
+                // Dragover handler
+                todoList.addEventListener('dragover', (e) => {
+            e.preventDefault();
+                const dragging = todoList.querySelector('.task-row.dragging');
+                if (!dragging) return;
+
+                const rows = Array.from(todoList.querySelectorAll('.task-row:not([data-parent-id])'));
+                const prev = new Map(rows.map(el => [el.dataset.id, el.getBoundingClientRect().top]));
+
+                const afterElement = getDragAfterElement(todoList, e.clientY);
+                if (afterElement == null) {
+            todoList.appendChild(dragging);
+            } else {
+            todoList.insertBefore(dragging, afterElement);
+            }
+
+                const newRows = Array.from(todoList.querySelectorAll('.task-row:not([data-parent-id])'));
+            newRows.forEach(el => {
+            if (el === dragging) return;
+            const oldTop = prev.get(el.dataset.id);
+            if (oldTop == null) return;
+            const newTop = el.getBoundingClientRect().top;
+            const dy = oldTop - newTop;
+            if (dy !== 0) {
+                el.style.transition = 'none';
+                el.style.transform = `translateY(${dy}px)`;
+                requestAnimationFrame(() => {
+                    el.style.transition = 'transform 150ms ease';
+                    el.style.transform = '';
+                });
+            }
+            });
+            });
+
                 if (doneSection) doneSection.style.display = hasDone ? '' : 'none';
             }
         }
