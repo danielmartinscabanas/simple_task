@@ -571,9 +571,46 @@
 
             // Render subtasks (only if not collapsed)
             if (task.subtasks && task.subtasks.length > 0 && !task.collapsed) {
-                task.subtasks.forEach(subtask => {
+                task.subtasks.forEach((subtask, subIndex) => {
                     const subtaskRow = createTaskRow(subtask.id, subtask, true, taskId, false);
                     todoList.appendChild(subtaskRow);
+                    subtaskRow.draggable = true;
+
+                    // Add drag-and-drop for subtasks
+                    subtaskRow.addEventListener('dragstart', (e) => {
+                        this.draggingId = subtask.id;
+                        this.draggingParentId = taskId;
+                        subtaskRow.classList.add('dragging');
+                        if (e.dataTransfer) {
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', subtask.id);
+                        }
+                    });
+
+                    subtaskRow.addEventListener('dragend', () => {
+                        subtaskRow.classList.remove('dragging');
+
+                        // Reorder subtasks based on DOM order
+                        const parentTask = this.tasks[taskId];
+                        if (parentTask) {
+                            const subtaskElements = Array.from(todoList.querySelectorAll(`[data-parent-id="${taskId}"]`));
+                            const newOrder = subtaskElements.map(el => el.dataset.id);
+
+                            // Reorder the subtasks array
+                            const reorderedSubtasks = [];
+                            newOrder.forEach(subId => {
+                                const sub = parentTask.subtasks.find(s => s.id === subId);
+                                if (sub) reorderedSubtasks.push(sub);
+                            });
+
+                            parentTask.subtasks = reorderedSubtasks;
+                            this.storage.save(this.tasks);
+                        }
+
+                        this.draggingId = null;
+                        this.draggingParentId = null;
+                        this.render();
+                    });
                 });
             }
             }
@@ -599,6 +636,36 @@
                 const dragging = todoList.querySelector('.task-row.dragging');
                 if (!dragging) return;
 
+                // Check if dragging a subtask
+                if (this.draggingParentId) {
+                    // Handle subtask reordering
+                    const subtasks = Array.from(todoList.querySelectorAll(`[data-parent-id="${this.draggingParentId}"]`));
+
+                    // Find which subtask is under the cursor
+                    let targetSubtask = null;
+                    for (const sub of subtasks) {
+                        if (sub === dragging) continue;
+                        const box = sub.getBoundingClientRect();
+                        if (e.clientY >= box.top && e.clientY <= box.bottom) {
+                            targetSubtask = sub;
+                            break;
+                        }
+                    }
+
+                    if (targetSubtask) {
+                        const box = targetSubtask.getBoundingClientRect();
+                        const offset = e.clientY - box.top - box.height / 2;
+
+                        if (offset < 0) {
+                            todoList.insertBefore(dragging, targetSubtask);
+                        } else {
+                            todoList.insertBefore(dragging, targetSubtask.nextSibling);
+                        }
+                    }
+                    return;
+                }
+
+                // Handle parent task reordering
                 const rows = Array.from(todoList.querySelectorAll('.task-row:not([data-parent-id])'));
                 const prev = new Map(rows.map(el => [el.dataset.id, el.getBoundingClientRect().top]));
 
