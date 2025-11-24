@@ -16,9 +16,14 @@
     <div class="page-header">
         <h2>Tasks</h2>
         <div class="header-actions">
-            <button id="export-tasks" aria-label="Export tasks" title="Export tasks">↗</button>
+            <button id="import-tasks" aria-label="Import tasks" title="Import tasks">↓</button>
+            <button id="export-tasks" aria-label="Export tasks" title="Export tasks">↑</button>
             <button id="theme-toggle" aria-label="Toggle theme" title="Toggle theme">☽</button>
         </div>
+    </div>
+    <div class="categories-bar">
+        <div id="category-tabs"></div>
+        <button id="add-category" aria-label="Add category" title="Add category">+</button>
     </div>
     <section id="todo-section">
         <h3>To do</h3>
@@ -32,16 +37,30 @@
         <hr />
         <div id="done-list"></div>
     </section>
-    <!-- Share URL Modal -->
-    <div id="export-modal" class="modal" aria-hidden="true" role="dialog">
+    <!-- Import Modal -->
+    <div id="import-modal" class="modal" aria-hidden="true" role="dialog">
         <div class="modal-card" role="document">
-            <div class="modal-title">Share URL</div>
-            <div class="modal-row">
-                <input id="share-url" type="text" readonly aria-label="Share URL" />
-                <div class="modal-actions">
-                    <button id="copy-url" aria-label="Copy URL" title="Copy URL"><img src="assets/icons/copy-icon.svg" alt="" class="icon-img" width="18" height="18" /></button>
-                    <button id="close-modal" aria-label="Close" title="Close">✕</button>
-                </div>
+            <div class="modal-title">Import Tasks</div>
+            <div class="modal-body">
+                <p class="modal-description">Select a JSON file to import tasks. This will replace your current tasks.</p>
+                <input type="file" id="import-file" accept=".json,application/json" aria-label="Select JSON file" />
+            </div>
+            <div class="modal-actions-row">
+                <button id="cancel-import" aria-label="Cancel" title="Cancel">Cancel</button>
+                <button id="confirm-import" aria-label="Import" title="Import" disabled>Import</button>
+            </div>
+        </div>
+    </div>
+    <!-- Delete Category Confirmation Modal -->
+    <div id="delete-category-modal" class="modal" aria-hidden="true" role="dialog">
+        <div class="modal-card" role="document">
+            <div class="modal-title">Delete Category</div>
+            <div class="modal-body">
+                <p class="modal-description">Are you sure you want to delete "<span id="delete-category-name"></span>"? This will permanently delete all tasks in this category.</p>
+            </div>
+            <div class="modal-actions-row">
+                <button id="cancel-delete-category" aria-label="Cancel" title="Cancel">Cancel</button>
+                <button id="confirm-delete-category" aria-label="Delete" title="Delete" class="danger-btn">Delete</button>
             </div>
         </div>
     </div>
@@ -77,23 +96,209 @@
                 localStorage.removeItem(this.storageKey);
             }
         }
-    
+
+        class Categories {
+            constructor(onChangeCallback) {
+                this.storage = new JsonStorage('categories');
+                this.selectedStorage = new JsonStorage('selectedCategory');
+                this.categories = this.storage.load() || {};
+                this.selectedId = this.selectedStorage.load() || null;
+                this.onChangeCallback = onChangeCallback;
+                this.pendingDeleteId = null;
+            }
+
+            add(name) {
+                const trimmedName = (name || '').trim();
+                if (!trimmedName) return false;
+
+                // Check for unique name
+                if (this.nameExists(trimmedName)) {
+                    alert('A category with this name already exists.');
+                    return false;
+                }
+
+                const categoryId = crypto.randomUUID();
+                const maxOrder = Math.max(-1, ...Object.values(this.categories).map(c => (c && typeof c.order === 'number') ? c.order : -1));
+                this.categories[categoryId] = { name: trimmedName, order: maxOrder + 1 };
+                this.storage.save(this.categories);
+
+                // Auto-select the new category
+                this.select(categoryId);
+                console.log(`Category '${trimmedName}' created.`);
+                return true;
+            }
+
+            remove(categoryId) {
+                if (!this.categories[categoryId]) return false;
+                delete this.categories[categoryId];
+                this.storage.save(this.categories);
+
+                // If deleted category was selected, select first available or null
+                if (this.selectedId === categoryId) {
+                    const remaining = Object.keys(this.categories);
+                    this.select(remaining.length > 0 ? remaining[0] : null);
+                }
+                console.log(`Category '${categoryId}' removed.`);
+                return true;
+            }
+
+            edit(categoryId, newName) {
+                const trimmedName = (newName || '').trim();
+                if (!trimmedName || !this.categories[categoryId]) return false;
+
+                // Check for unique name (excluding current category)
+                if (this.nameExists(trimmedName, categoryId)) {
+                    alert('A category with this name already exists.');
+                    return false;
+                }
+
+                this.categories[categoryId].name = trimmedName;
+                this.storage.save(this.categories);
+                console.log(`Category '${categoryId}' renamed to '${trimmedName}'.`);
+                return true;
+            }
+
+            select(categoryId) {
+                this.selectedId = categoryId;
+                this.selectedStorage.save(categoryId);
+                if (this.onChangeCallback) this.onChangeCallback();
+            }
+
+            nameExists(name, excludeId = null) {
+                const lowerName = name.toLowerCase();
+                return Object.entries(this.categories).some(([id, cat]) =>
+                    id !== excludeId && cat.name.toLowerCase() === lowerName
+                );
+            }
+
+            getSelected() {
+                return this.selectedId;
+            }
+
+            getSorted() {
+                return Object.entries(this.categories)
+                    .sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+            }
+
+            getNameById(categoryId) {
+                if (!categoryId || !this.categories[categoryId]) return null;
+                return this.categories[categoryId].name;
+            }
+
+            render(container, deleteModal, deleteNameSpan) {
+                if (!container) return;
+                container.innerHTML = '';
+
+                // Add "All" tab first
+                const allTab = document.createElement('div');
+                allTab.className = 'category-tab';
+                if (this.selectedId === null) {
+                    allTab.classList.add('active');
+                }
+                const allNameSpan = document.createElement('span');
+                allNameSpan.className = 'category-name';
+                allNameSpan.textContent = 'All';
+                allNameSpan.addEventListener('click', () => {
+                    this.select(null);
+                    this.render(container, deleteModal, deleteNameSpan);
+                });
+                allTab.appendChild(allNameSpan);
+                container.appendChild(allTab);
+
+                const sorted = this.getSorted();
+
+                for (const [categoryId, category] of sorted) {
+                    const tab = document.createElement('div');
+                    tab.className = 'category-tab';
+                    tab.dataset.id = categoryId;
+                    if (categoryId === this.selectedId) {
+                        tab.classList.add('active');
+                    }
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'category-name';
+                    nameSpan.textContent = category.name;
+                    nameSpan.addEventListener('click', () => {
+                        this.select(categoryId);
+                        this.render(container, deleteModal, deleteNameSpan);
+                    });
+
+                    const editBtn = document.createElement('button');
+                    editBtn.textContent = '🖋';
+                    editBtn.className = 'category-action';
+                    editBtn.setAttribute('aria-label', 'Edit category');
+                    editBtn.setAttribute('title', 'Edit category');
+                    editBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        const editInput = document.createElement('input');
+                        editInput.type = 'text';
+                        editInput.value = category.name;
+                        editInput.className = 'category-edit-input';
+
+                        editInput.addEventListener('keydown', (ev) => {
+                            if (ev.key === 'Enter') {
+                                const newName = editInput.value.trim();
+                                if (newName && this.edit(categoryId, newName)) {
+                                    this.render(container, deleteModal, deleteNameSpan);
+                                }
+                            } else if (ev.key === 'Escape') {
+                                this.render(container, deleteModal, deleteNameSpan);
+                            }
+                        });
+
+                        editInput.addEventListener('blur', () => {
+                            this.render(container, deleteModal, deleteNameSpan);
+                        });
+
+                        tab.replaceChild(editInput, nameSpan);
+                        editInput.focus();
+                        editInput.select();
+                    });
+
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.textContent = '🗑';
+                    deleteBtn.className = 'category-action category-delete';
+                    deleteBtn.setAttribute('aria-label', 'Delete category');
+                    deleteBtn.setAttribute('title', 'Delete category');
+                    deleteBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.pendingDeleteId = categoryId;
+                        if (deleteNameSpan) deleteNameSpan.textContent = category.name;
+                        if (deleteModal) {
+                            deleteModal.classList.add('open');
+                            deleteModal.setAttribute('aria-hidden', 'false');
+                        }
+                    });
+
+                    tab.appendChild(nameSpan);
+                    // Only show edit/delete buttons for the active category
+                    if (categoryId === this.selectedId) {
+                        tab.appendChild(editBtn);
+                        tab.appendChild(deleteBtn);
+                    }
+                    container.appendChild(tab);
+                }
+            }
+        }
+
         class Tasks{
-            constructor(){
+            constructor(categoriesInstance){
                 this.storage = new JsonStorage('tasks');
                 this.tasks = this.storage.load();
                 this.draggingId = null;
+                this.categories = categoriesInstance;
             }
 
             add(text){
                 try{
                     const taskId = crypto.randomUUID();
                     const existing = this.tasks || {};
+                    const categoryId = this.categories ? this.categories.getSelected() : null;
                     const maxOrder = Math.max(-1, ...Object.values(existing).map(t => (t && typeof t.order === 'number') ? t.order : -1));
-                    const newTask = {"task": text, "done": false, "order": maxOrder + 1, "subtasks": [], "collapsed": false};
+                    const newTask = {"task": text, "done": false, "order": maxOrder + 1, "subtasks": [], "collapsed": false, "categoryId": categoryId};
                     this.tasks[taskId] = newTask;
                     this.storage.save(this.tasks);
-                    console.log(`Task '${text}' created.`);
+                    console.log(`Task '${text}' created in category '${categoryId}'.`);
 
                     return true;
 
@@ -102,6 +307,16 @@
 
                     return false;
                 }
+            }
+
+            removeByCategory(categoryId) {
+                if (!categoryId) return;
+                const toRemove = Object.entries(this.tasks || {})
+                    .filter(([_, task]) => task.categoryId === categoryId)
+                    .map(([id]) => id);
+                toRemove.forEach(id => delete this.tasks[id]);
+                this.storage.save(this.tasks);
+                console.log(`Removed ${toRemove.length} tasks from category '${categoryId}'.`);
             }
 
             remove(taskId){
@@ -218,7 +433,8 @@
                             done: subtaskData.done,
                             order: parentOrder + 1,
                             subtasks: [],
-                            collapsed: false
+                            collapsed: false,
+                            categoryId: this.tasks[currentParent].categoryId || null  // Inherit parent's category
                         };
                         console.log(`Task '${taskId}' promoted to root level.`);
                     } else {
@@ -238,6 +454,7 @@
                         delete taskData.order;  // Subtasks don't need order
                         delete taskData.subtasks;  // Subtasks can't have subtasks
                         delete taskData.collapsed;  // Subtasks don't need collapsed state
+                        delete taskData.categoryId;  // Subtasks inherit parent's category
 
                         if (!this.tasks[parentId].subtasks) {
                             this.tasks[parentId].subtasks = [];
@@ -257,8 +474,6 @@
             }
 
             render(){
-
-
                 const todoList = document.getElementById('todo-list');
                 const doneList = document.getElementById('done-list');
                 const doneSection = document.getElementById('done-section');
@@ -267,12 +482,20 @@
                 todoList.innerHTML = '';
                 doneList.innerHTML = '';
 
-                const entries = (this.tasks && typeof this.tasks === 'object') ? Object.entries(this.tasks) : [];
-            entries.sort((a,b) => {
-                const ao = (a[1] && typeof a[1].order === 'number') ? a[1].order : 0;
-                const bo = (b[1] && typeof b[1].order === 'number') ? b[1].order : 0;
-                return ao - bo;
-            });
+                // Filter tasks by selected category
+                const selectedCategoryId = this.categories ? this.categories.getSelected() : null;
+                let entries = (this.tasks && typeof this.tasks === 'object') ? Object.entries(this.tasks) : [];
+
+                // Only filter if a category is selected
+                if (selectedCategoryId) {
+                    entries = entries.filter(([_, task]) => task.categoryId === selectedCategoryId);
+                }
+
+                entries.sort((a,b) => {
+                    const ao = (a[1] && typeof a[1].order === 'number') ? a[1].order : 0;
+                    const bo = (b[1] && typeof b[1].order === 'number') ? b[1].order : 0;
+                    return ao - bo;
+                });
                 let hasDone = false;
 
                 // Helper: Check if all subtasks are done
@@ -300,7 +523,7 @@
 
                 // Add indentation for subtasks (includes space for toggle button + standard indent)
                 if (isSubtask) {
-            row.style.paddingLeft = '48px'; // 24px for toggle button space + 24px for indent
+            row.classList.add('subtask-row');
             }
 
                 const checkbox = document.createElement('input');
@@ -347,39 +570,103 @@
             editBtn.textContent = '🖋';
             editBtn.setAttribute('aria-label', 'Edit task');
             editBtn.setAttribute('title', 'Edit task');
-            editBtn.style.fontSize = '12px';
+            editBtn.classList.add('task-action-btn');
             editBtn.addEventListener('click', () => {
+            // Create edit container
+            const editContainer = document.createElement('div');
+            editContainer.className = 'task-edit-container';
+
             const editInput = document.createElement('input');
             editInput.type = 'text';
             editInput.value = taskData.task;
-            editInput.style.flex = '1';
 
-            // Save only on Enter key press
-            editInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    const newText = (editInput.value || '').trim();
-                    if (newText) {
-                        if (!isSubtask) {
-                            if (this.edit(taskId, newText)) {
-                                this.render();
-                            }
-                        } else {
-                            // Update subtask text
-                            const parent = this.tasks[parentId];
-                            if (parent) {
-                                const subtask = parent.subtasks.find(st => st.id === taskId);
-                                if (subtask) {
-                                    subtask.task = newText;
-                                    this.storage.save(this.tasks);
-                                    this.render();
+            // Create category dropdown (only for parent tasks)
+            let categorySelect = null;
+            if (!isSubtask && this.categories) {
+                categorySelect = document.createElement('select');
+                categorySelect.className = 'task-category-select';
+
+                // Add "Uncategorized" option
+                const uncatOption = document.createElement('option');
+                uncatOption.value = '';
+                uncatOption.textContent = 'Uncategorized';
+                categorySelect.appendChild(uncatOption);
+
+                // Add all categories
+                const sortedCategories = this.categories.getSorted();
+                for (const [catId, cat] of sortedCategories) {
+                    const option = document.createElement('option');
+                    option.value = catId;
+                    option.textContent = cat.name;
+                    if (catId === taskData.categoryId) {
+                        option.selected = true;
+                    }
+                    categorySelect.appendChild(option);
+                }
+
+                // If task has no category, select "Uncategorized"
+                if (!taskData.categoryId) {
+                    categorySelect.value = '';
+                }
+            }
+
+            // Save on Enter key press
+            const saveEdit = () => {
+                const newText = (editInput.value || '').trim();
+                if (newText) {
+                    if (!isSubtask) {
+                        if (this.edit(taskId, newText)) {
+                            // Also update category if changed
+                            if (categorySelect) {
+                                const newCategoryId = categorySelect.value || null;
+                                this.tasks[taskId].categoryId = newCategoryId;
+                                // Ensure all subtasks inherit parent's category (clear any old categoryId)
+                                if (this.tasks[taskId].subtasks) {
+                                    this.tasks[taskId].subtasks.forEach(st => {
+                                        delete st.categoryId;
+                                    });
                                 }
+                                this.storage.save(this.tasks);
+                            }
+                            this.render();
+                        }
+                    } else {
+                        // Update subtask text
+                        const parent = this.tasks[parentId];
+                        if (parent) {
+                            const subtask = parent.subtasks.find(st => st.id === taskId);
+                            if (subtask) {
+                                subtask.task = newText;
+                                this.storage.save(this.tasks);
+                                this.render();
                             }
                         }
                     }
                 }
+            };
+
+            editInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') saveEdit();
+                if (e.key === 'Escape') this.render();
             });
 
-            row.replaceChild(editInput, text);
+            if (categorySelect) {
+                categorySelect.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') saveEdit();
+                    if (e.key === 'Escape') this.render();
+                });
+            }
+
+            editContainer.appendChild(editInput);
+            if (categorySelect) {
+                editContainer.appendChild(categorySelect);
+            }
+
+            row.replaceChild(editContainer, text);
+
+            // Add editing class to row (hides category tag via CSS)
+            row.classList.add('editing');
+
             editInput.focus();
             editInput.select();
             });
@@ -394,7 +681,7 @@
 
                 // Hide button for parent tasks with subtasks OR if it's the first root task
                 if ((!isSubtask && taskData.subtasks && taskData.subtasks.length > 0) || (!isSubtask && isFirstRootTask)) {
-                    subTaskToggleBtn.style.display = 'none';
+                    subTaskToggleBtn.classList.add('hidden');
                 }
 
                 if (isSubtask) {
@@ -423,7 +710,7 @@
             removeBtn.textContent = '🗑';
             removeBtn.setAttribute('aria-label', 'Remove task');
             removeBtn.setAttribute('title', 'Remove task');
-            removeBtn.style.fontSize = '12px';
+            removeBtn.classList.add('task-action-btn');
             removeBtn.addEventListener('click', () => {
             if (!isSubtask) {
                 this.remove(taskId);
@@ -465,13 +752,7 @@
                             // Collapsing: animate subtasks out first
                             const subtaskRows = document.querySelectorAll(`[data-parent-id="${taskId}"]`);
                             subtaskRows.forEach(subtaskRow => {
-                                subtaskRow.style.transition = 'max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease, padding 0.3s ease';
-                                subtaskRow.style.maxHeight = '0';
-                                subtaskRow.style.opacity = '0';
-                                subtaskRow.style.marginTop = '0';
-                                subtaskRow.style.marginBottom = '0';
-                                subtaskRow.style.paddingTop = '0';
-                                subtaskRow.style.paddingBottom = '0';
+                                subtaskRow.classList.add('subtask-collapsing');
                             });
 
                             setTimeout(() => {
@@ -490,22 +771,14 @@
                                 const subtaskRows = document.querySelectorAll(`[data-parent-id="${taskId}"]`);
                                 subtaskRows.forEach(subtaskRow => {
                                     // Start with collapsed state
-                                    subtaskRow.style.maxHeight = '0';
-                                    subtaskRow.style.opacity = '0';
-                                    subtaskRow.style.marginTop = '0';
-                                    subtaskRow.style.marginBottom = '0';
+                                    subtaskRow.classList.add('subtask-collapsing');
 
                                     // Force a reflow
                                     subtaskRow.offsetHeight;
 
-                                    // Apply transition
-                                    subtaskRow.style.transition = 'max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease';
-
-                                    // Animate to expanded state
-                                    subtaskRow.style.maxHeight = '60px';
-                                    subtaskRow.style.opacity = '1';
-                                    subtaskRow.style.marginTop = '';
-                                    subtaskRow.style.marginBottom = '';
+                                    // Add transition class and remove collapsed state
+                                    subtaskRow.classList.add('subtask-expanding');
+                                    subtaskRow.classList.remove('subtask-collapsing');
                                 });
                             });
                         }
@@ -517,7 +790,93 @@
 
             row.appendChild(checkbox);
             row.appendChild(text);
+
+            // Add category tag when viewing "All" (no category filter)
+            if (!selectedCategoryId && !isSubtask && taskData.categoryId) {
+                const categoryName = this.categories ? this.categories.getNameById(taskData.categoryId) : null;
+                if (categoryName) {
+                    const categoryTag = document.createElement('span');
+                    categoryTag.className = 'task-category-tag';
+                    categoryTag.textContent = categoryName;
+                    row.appendChild(categoryTag);
+                }
+            }
+
+            // Move up button
+            const moveUpBtn = document.createElement('button');
+            moveUpBtn.textContent = '⬆';
+            moveUpBtn.setAttribute('aria-label', 'Move up');
+            moveUpBtn.setAttribute('title', 'Move up');
+            moveUpBtn.classList.add('task-move-btn');
+            moveUpBtn.addEventListener('click', () => {
+                if (!isSubtask) {
+                    // Move parent task up
+                    const sortedTasks = Object.entries(this.tasks)
+                        .filter(([_, t]) => t.categoryId === taskData.categoryId || (!selectedCategoryId))
+                        .sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+                    const currentIndex = sortedTasks.findIndex(([id]) => id === taskId);
+                    if (currentIndex > 0) {
+                        const prevTaskId = sortedTasks[currentIndex - 1][0];
+                        const currentOrder = this.tasks[taskId].order;
+                        this.tasks[taskId].order = this.tasks[prevTaskId].order;
+                        this.tasks[prevTaskId].order = currentOrder;
+                        this.storage.save(this.tasks);
+                        this.render();
+                    }
+                } else {
+                    // Move subtask up within parent
+                    const parent = this.tasks[parentId];
+                    if (parent && parent.subtasks) {
+                        const currentIndex = parent.subtasks.findIndex(st => st.id === taskId);
+                        if (currentIndex > 0) {
+                            [parent.subtasks[currentIndex - 1], parent.subtasks[currentIndex]] =
+                                [parent.subtasks[currentIndex], parent.subtasks[currentIndex - 1]];
+                            this.storage.save(this.tasks);
+                            this.render();
+                        }
+                    }
+                }
+            });
+
+            // Move down button
+            const moveDownBtn = document.createElement('button');
+            moveDownBtn.textContent = '⬇';
+            moveDownBtn.setAttribute('aria-label', 'Move down');
+            moveDownBtn.setAttribute('title', 'Move down');
+            moveDownBtn.classList.add('task-move-btn');
+            moveDownBtn.addEventListener('click', () => {
+                if (!isSubtask) {
+                    // Move parent task down
+                    const sortedTasks = Object.entries(this.tasks)
+                        .filter(([_, t]) => t.categoryId === taskData.categoryId || (!selectedCategoryId))
+                        .sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
+                    const currentIndex = sortedTasks.findIndex(([id]) => id === taskId);
+                    if (currentIndex < sortedTasks.length - 1) {
+                        const nextTaskId = sortedTasks[currentIndex + 1][0];
+                        const currentOrder = this.tasks[taskId].order;
+                        this.tasks[taskId].order = this.tasks[nextTaskId].order;
+                        this.tasks[nextTaskId].order = currentOrder;
+                        this.storage.save(this.tasks);
+                        this.render();
+                    }
+                } else {
+                    // Move subtask down within parent
+                    const parent = this.tasks[parentId];
+                    if (parent && parent.subtasks) {
+                        const currentIndex = parent.subtasks.findIndex(st => st.id === taskId);
+                        if (currentIndex < parent.subtasks.length - 1) {
+                            [parent.subtasks[currentIndex], parent.subtasks[currentIndex + 1]] =
+                                [parent.subtasks[currentIndex + 1], parent.subtasks[currentIndex]];
+                            this.storage.save(this.tasks);
+                            this.render();
+                        }
+                    }
+                }
+            });
+
             row.appendChild(subTaskToggleBtn);
+            row.appendChild(moveUpBtn);
+            row.appendChild(moveDownBtn);
             row.appendChild(editBtn);
             row.appendChild(removeBtn);
 
@@ -684,17 +1043,18 @@
             const newTop = el.getBoundingClientRect().top;
             const dy = oldTop - newTop;
             if (dy !== 0) {
-                el.style.transition = 'none';
+                el.classList.add('drag-no-animate');
                 el.style.transform = `translateY(${dy}px)`;
                 requestAnimationFrame(() => {
-                    el.style.transition = 'transform 150ms ease';
+                    el.classList.remove('drag-no-animate');
+                    el.classList.add('drag-animate');
                     el.style.transform = '';
                 });
             }
             });
             });
 
-                if (doneSection) doneSection.style.display = hasDone ? '' : 'none';
+                if (doneSection) doneSection.classList.toggle('hidden', !hasDone);
             }
         }
 
@@ -721,211 +1081,205 @@
             }
         }
 
-        class Share {
-            constructor(app, baseUrl, basePath, modal, inputEl, copyBtn, closeBtn){
+        class FileManager {
+            constructor(app, categories, modal, fileInput, cancelBtn, confirmBtn){
                 this.app = app;
-                this.baseUrl = baseUrl;
-                this.basePath = basePath;
+                this.categories = categories;
                 this.modal = modal;
-                this.inputEl = inputEl;
-                this.copyBtn = copyBtn;
-                this.closeBtn = closeBtn;
+                this.fileInput = fileInput;
+                this.cancelBtn = cancelBtn;
+                this.confirmBtn = confirmBtn;
+                this.pendingData = null;
             }
 
-            static bytesToBase64Url(bytes){
-                let binary = '';
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-                return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
-            }
-            static base64UrlToBytes(b64url){
-                let b64 = (b64url || '').replace(/-/g, '+').replace(/_/g, '/');
-                while (b64.length % 4) b64 += '=';
-                const binary = atob(b64);
-                const out = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
-                return out;
-            }
-            static lzwCompress(bytes){
-                const CLEAR = 4095;
-                let dict = new Map();
-                for (let i = 0; i < 256; i++) dict.set(String.fromCharCode(i), i);
-                let dictSize = 256;
-                let w = '';
-                const codes = [];
-                for (let i = 0; i < bytes.length; i++) {
-                    const c = String.fromCharCode(bytes[i]);
-                    const wc = w + c;
-                    if (dict.has(wc)) {
-                        w = wc;
-                    } else {
-                        codes.push(dict.get(w));
-                        dict.set(wc, dictSize++);
-                        if (dictSize >= CLEAR) {
-                            codes.push(CLEAR);
-                            dict = new Map();
-                            for (let j = 0; j < 256; j++) dict.set(String.fromCharCode(j), j);
-                            dictSize = 256;
-                        }
-                        w = c;
-                    }
+            exportToFile(){
+                try {
+                    const exportData = {
+                        tasks: this.app.tasks || {},
+                        categories: this.categories.categories || {}
+                    };
+                    const data = JSON.stringify(exportData, null, 2);
+                    const blob = new Blob([data], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    const date = new Date().toISOString().slice(0, 10);
+                    a.download = `simpletask-${date}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    console.log('Tasks and categories exported successfully.');
+                } catch (err) {
+                    console.error('Export failed:', err);
                 }
-                if (w !== '') codes.push(dict.get(w));
-                const out = [];
-                let bitBuffer = 0, bitCount = 0;
-                for (let k = 0; k < codes.length; k++) {
-                    const code = codes[k] & 0x0fff;
-                    bitBuffer |= (code << bitCount);
-                    bitCount += 12;
-                    while (bitCount >= 8) {
-                        out.push(bitBuffer & 0xff);
-                        bitBuffer >>= 8;
-                        bitCount -= 8;
-                    }
-                }
-                if (bitCount > 0) out.push(bitBuffer & 0xff);
-                return new Uint8Array(out);
             }
-            static lzwDecompress(packed){
-                const CLEAR = 4095;
-                const codes = [];
-                let bitBuffer = 0, bitCount = 0;
-                for (let i = 0; i < packed.length; i++) {
-                    bitBuffer |= (packed[i] << bitCount);
-                    bitCount += 8;
-                    while (bitCount >= 12) {
-                        const code = bitBuffer & 0x0fff;
-                        codes.push(code);
-                        bitBuffer >>= 12;
-                        bitCount -= 12;
-                    }
-                }
-                const reset = () => {
-                    const dict = [];
-                    for (let i = 0; i < 256; i++) dict[i] = String.fromCharCode(i);
-                    return { dict, size: 256 };
-                };
-                let { dict, size } = reset();
-                let w = '';
-                let result = '';
-                for (let i = 0; i < codes.length; i++) {
-                    const k = codes[i];
-                    if (k === CLEAR) { ({ dict, size } = reset()); w = ''; continue; }
-                    let entry;
-                    if (k < size) entry = dict[k];
-                    else if (k === size && w) entry = w + w[0];
-                    else return new Uint8Array(0);
-                    result += entry;
-                    if (w) dict[size++] = w + entry[0];
-                    w = entry;
-                }
-                const out = new Uint8Array(result.length);
-                for (let i = 0; i < result.length; i++) out[i] = result.charCodeAt(i) & 0xff;
-                return out;
-            }
-            static encodeTasksPayload(obj){
-                const json = JSON.stringify(obj || {});
-                const utf8 = new TextEncoder().encode(json);
-                const plain = Share.bytesToBase64Url(utf8);
-                const compressed = Share.bytesToBase64Url(Share.lzwCompress(utf8));
-                return (compressed.length + 2 < plain.length ? 'c~' + compressed : 'p~' + plain);
-            }
-            static decodeTasksPayload(payload){
-                if (!payload) throw new Error('Empty payload');
-                const sep = payload.indexOf('~');
-                if (sep > 0 && sep < 4) {
-                    const mode = payload.slice(0, sep);
-                    const body = payload.slice(sep + 1);
-                    if (mode === 'c') {
-                        const bytes = Share.base64UrlToBytes(body);
-                        const dec = Share.lzwDecompress(bytes);
-                        const json = new TextDecoder().decode(dec);
-                        return JSON.parse(json);
-                    } else if (mode === 'p') {
-                        const bytes = Share.base64UrlToBytes(body);
-                        const json = new TextDecoder().decode(bytes);
-                        return JSON.parse(json);
-                    }
-                }
-                const bytes = Share.base64UrlToBytes(payload);
-                const json = new TextDecoder().decode(bytes);
-                return JSON.parse(json);
-            }
-            openModal(url){
-                if (!this.modal || !this.inputEl) return;
-                this.inputEl.value = url;
+
+            openModal(){
+                if (!this.modal) return;
+                this.pendingData = null;
+                if (this.fileInput) this.fileInput.value = '';
+                if (this.confirmBtn) this.confirmBtn.disabled = true;
                 this.modal.classList.add('open');
                 this.modal.setAttribute('aria-hidden', 'false');
-                setTimeout(() => { try { this.inputEl.focus(); this.inputEl.select(); } catch(_) {} }, 0);
             }
+
             closeModal(){
                 if (!this.modal) return;
                 this.modal.classList.remove('open');
                 this.modal.setAttribute('aria-hidden', 'true');
+                this.pendingData = null;
+                if (this.fileInput) this.fileInput.value = '';
+                if (this.confirmBtn) this.confirmBtn.disabled = true;
             }
-            setCopyDefaultIcon(){
-                if (this.copyBtn) this.copyBtn.innerHTML = '<img src="assets/icons/copy-icon.svg" alt="" class="icon-img" width="18" height="18">';
-            }
-            attachCopy(){
-                if (this.copyBtn && this.inputEl) {
-                    this.copyBtn.addEventListener('click', async () => {
-                        try {
-                            await navigator.clipboard.writeText(this.inputEl.value);
-                            this.copyBtn.textContent = '✓';
-                            setTimeout(() => this.setCopyDefaultIcon(), 1000);
-                        } catch (err) {
-                            try {
-                                this.inputEl.select();
-                                document.execCommand('copy');
-                                this.copyBtn.textContent = '✓';
-                                setTimeout(() => this.setCopyDefaultIcon(), 1000);
-                            } catch(_) {}
+
+            handleFileSelect(file){
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    try {
+                        const parsed = JSON.parse(e.target.result);
+                        if (!parsed || typeof parsed !== 'object') {
+                            throw new Error('Invalid data format');
                         }
+                        this.pendingData = parsed;
+                        if (this.confirmBtn) this.confirmBtn.disabled = false;
+                        console.log('File parsed successfully, ready to import.');
+                    } catch (err) {
+                        console.error('Invalid JSON file:', err);
+                        this.pendingData = null;
+                        if (this.confirmBtn) this.confirmBtn.disabled = true;
+                        alert('Invalid JSON file. Please select a valid SimpleTask export file.');
+                    }
+                };
+                reader.onerror = () => {
+                    console.error('Failed to read file');
+                    this.pendingData = null;
+                    if (this.confirmBtn) this.confirmBtn.disabled = true;
+                };
+                reader.readAsText(file);
+            }
+
+            confirmImport(){
+                if (!this.pendingData) return;
+
+                // Handle new format (with tasks and categories) or old format (tasks only)
+                if (this.pendingData.tasks && typeof this.pendingData.tasks === 'object') {
+                    // New format
+                    this.app.tasks = this.pendingData.tasks;
+                    this.app.storage.save(this.app.tasks);
+
+                    if (this.pendingData.categories && typeof this.pendingData.categories === 'object') {
+                        this.categories.categories = this.pendingData.categories;
+                        this.categories.storage.save(this.categories.categories);
+                        // Reset selected category to "All"
+                        this.categories.select(null);
+                    }
+                    console.log('Tasks and categories imported successfully.');
+                } else {
+                    // Old format (backward compatibility)
+                    this.app.tasks = this.pendingData;
+                    this.app.storage.save(this.app.tasks);
+                    console.log('Tasks imported successfully (legacy format).');
+                }
+
+                this.closeModal();
+                this.categories.render(
+                    document.getElementById('category-tabs'),
+                    document.getElementById('delete-category-modal'),
+                    document.getElementById('delete-category-name')
+                );
+                this.app.render();
+            }
+
+            init(){
+                if (this.fileInput) {
+                    this.fileInput.addEventListener('change', (e) => {
+                        const file = e.target.files[0];
+                        if (file) this.handleFileSelect(file);
                     });
                 }
-            }
-            attachModalEvents(){
-                if (this.closeBtn) this.closeBtn.addEventListener('click', () => this.closeModal());
-                if (this.modal) this.modal.addEventListener('click', (e) => { if (e.target === this.modal) this.closeModal(); });
-                document.addEventListener('keydown', (e) => { if (e.key === 'Escape') this.closeModal(); });
-            }
-            handleExportClick(){
-                try{
-                    const payload = Share.encodeTasksPayload(this.app.tasks || {});
-                    const url = `${this.baseUrl}${payload}`;
-                    this.openModal(url);
-                } catch(err) {
-                    console.error('Export failed:', err);
+                if (this.cancelBtn) {
+                    this.cancelBtn.addEventListener('click', () => this.closeModal());
                 }
-            }
-            maybeImportFromUrl(){
-                try {
-                    const path = location.pathname || '';
-                    const idx = path.indexOf(this.basePath);
-                    if (idx === -1) return false;
-                    const rest = path.slice(idx + this.basePath.length).replace(/^\/+/, '');
-                    if (!rest) return false;
-                    const parsed = Share.decodeTasksPayload(rest);
-                    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid data');
-                    this.app.tasks = parsed;
-                    this.app.storage.save(this.app.tasks);
-                    location.replace(this.baseUrl);
-                    return true;
-                } catch (err) {
-                    console.error('URL import failed:', err);
-                    return false;
+                if (this.confirmBtn) {
+                    this.confirmBtn.addEventListener('click', () => this.confirmImport());
                 }
-            }
-            init(){
-                this.attachCopy();
-                this.attachModalEvents();
+                if (this.modal) {
+                    this.modal.addEventListener('click', (e) => {
+                        if (e.target === this.modal) this.closeModal();
+                    });
+                }
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') this.closeModal();
+                });
             }
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            const BASE_PATH = '/simple_task/';
-            const BASE_URL = 'https://danielmartinscabanas.github.io' + BASE_PATH;
+            // Category elements
+            const categoryTabs = document.getElementById('category-tabs');
+            const addCategoryBtn = document.getElementById('add-category');
+            const deleteCategoryModal = document.getElementById('delete-category-modal');
+            const deleteCategoryName = document.getElementById('delete-category-name');
+            const cancelDeleteCategory = document.getElementById('cancel-delete-category');
+            const confirmDeleteCategory = document.getElementById('confirm-delete-category');
 
-            const app = new Tasks();
+            // Initialize Categories first (app will use it for filtering)
+            let app; // Forward declaration
+            const categories = new Categories(() => {
+                if (app) app.render();
+                categories.render(categoryTabs, deleteCategoryModal, deleteCategoryName);
+            });
+
+            // Initialize Tasks with categories reference
+            app = new Tasks(categories);
+
+            // Add category button
+            if (addCategoryBtn) {
+                addCategoryBtn.addEventListener('click', () => {
+                    const name = prompt('Enter category name:');
+                    if (name && name.trim()) {
+                        if (categories.add(name.trim())) {
+                            categories.render(categoryTabs, deleteCategoryModal, deleteCategoryName);
+                            app.render();
+                        }
+                    }
+                });
+            }
+
+            // Delete category modal handlers
+            const closeDeleteModal = () => {
+                if (deleteCategoryModal) {
+                    deleteCategoryModal.classList.remove('open');
+                    deleteCategoryModal.setAttribute('aria-hidden', 'true');
+                }
+                categories.pendingDeleteId = null;
+            };
+
+            if (cancelDeleteCategory) {
+                cancelDeleteCategory.addEventListener('click', closeDeleteModal);
+            }
+
+            if (confirmDeleteCategory) {
+                confirmDeleteCategory.addEventListener('click', () => {
+                    if (categories.pendingDeleteId) {
+                        // Delete all tasks in this category
+                        app.removeByCategory(categories.pendingDeleteId);
+                        // Delete the category
+                        categories.remove(categories.pendingDeleteId);
+                        categories.render(categoryTabs, deleteCategoryModal, deleteCategoryName);
+                        app.render();
+                    }
+                    closeDeleteModal();
+                });
+            }
+
+            if (deleteCategoryModal) {
+                deleteCategoryModal.addEventListener('click', (e) => {
+                    if (e.target === deleteCategoryModal) closeDeleteModal();
+                });
+            }
 
             const addInput = document.getElementById('new-task');
             if (addInput) {
@@ -946,17 +1300,20 @@
             const theme = new Theme(themeToggle);
             theme.init();
 
+            const importBtn = document.getElementById('import-tasks');
             const exportBtn = document.getElementById('export-tasks');
-            const modal = document.getElementById('export-modal');
-            const shareInput = document.getElementById('share-url');
-            const copyBtn = document.getElementById('copy-url');
-            const closeBtn = document.getElementById('close-modal');
-            const share = new Share(app, BASE_URL, BASE_PATH, modal, shareInput, copyBtn, closeBtn);
-            share.init();
-            if (exportBtn) exportBtn.addEventListener('click', () => share.handleExportClick());
+            const modal = document.getElementById('import-modal');
+            const fileInput = document.getElementById('import-file');
+            const cancelBtn = document.getElementById('cancel-import');
+            const confirmBtn = document.getElementById('confirm-import');
+            const fileManager = new FileManager(app, categories, modal, fileInput, cancelBtn, confirmBtn);
+            fileManager.init();
+            if (importBtn) importBtn.addEventListener('click', () => fileManager.openModal());
+            if (exportBtn) exportBtn.addEventListener('click', () => fileManager.exportToFile());
 
+            // Initial render
+            categories.render(categoryTabs, deleteCategoryModal, deleteCategoryName);
             app.render();
-            share.maybeImportFromUrl();
 
             // Register Service Worker for PWA/offline support
             if ('serviceWorker' in navigator) {

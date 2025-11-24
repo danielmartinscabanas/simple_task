@@ -9,7 +9,7 @@
   --bg: #ffffff;
   --text: #111827;
   --card-bg: #ffffff;
-  --border: #e5e7eb;
+  --border: #dddddd;
   --muted-text: #6b7280;
   --icon: #8d8d8d;
   --danger: #ef4444;
@@ -21,7 +21,7 @@
   --bg: #000000;
   --text: #e5e7eb;
   --card-bg: #000000;
-  --border: #232323;
+  --border: #333333;
   --muted-text: #9ca3af;
   --icon: #9ca3af;
   --danger: #f87171;
@@ -105,7 +105,7 @@ section > * + * { margin-top: 6px; margin-bottom: 0; }
 #done-list > div {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 0;
   padding: 0;
   margin: 0;
 }
@@ -114,6 +114,7 @@ section > * + * { margin-top: 6px; margin-bottom: 0; }
 #done-list > div span {
   flex: 1;
   min-width: 0;
+  margin-left: 5px;
 }
 
 .task-row {
@@ -131,6 +132,12 @@ section > * + * { margin-top: 6px; margin-bottom: 0; }
   -webkit-user-select: none;
 }
 
+/* Subtask row styling */
+#todo-list > div.task-row.subtask-row,
+#done-list > div.task-row.subtask-row {
+  padding-left: 48px; /* 24px for toggle button space + 24px for indent */
+}
+
 /* Subtask collapse/expand animation */
 .task-row[data-parent-id] {
   overflow: hidden;
@@ -138,9 +145,81 @@ section > * + * { margin-top: 6px; margin-bottom: 0; }
   opacity: 1;
 }
 
+/* Subtask collapsing animation state */
+.task-row.subtask-collapsing {
+  transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease, padding 0.3s ease;
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Subtask expanding animation state */
+.task-row.subtask-expanding {
+  transition: max-height 0.3s ease, opacity 0.3s ease, margin 0.3s ease;
+}
+
+/* Drag animation helper classes */
+.task-row.drag-animate {
+  transition: transform 150ms ease;
+}
+
+.task-row.drag-no-animate {
+  transition: none;
+}
+
 #todo-list > div + div { margin-top: 0; }
 #done-list > div { margin-top: 0; }
 #done-list > div:last-child { margin-bottom: -6px; }
+
+/*
+  Task Category Tag (shown when viewing All)
+*/
+#todo-list > div span.task-category-tag,
+#done-list > div span.task-category-tag {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--border);
+  color: var(--muted-text);
+  border-radius: 4px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Task category dropdown (in edit mode) */
+.task-category-select {
+  font-family: inherit;
+  font-size: 12px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+  max-width: 120px;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+
+.task-category-select:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.35);
+  outline: none;
+}
+
+:root[data-theme="dark"] .task-category-select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+}
 
 /*
   Subtask styling
@@ -289,8 +368,8 @@ input[type="checkbox"]:checked::after { transform: scale(1); }
   Subtask Edit Toggle Button (in edit mode)
 */
 .subtask-edit-toggle {
-  width: 30px;
-  height: 30px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   margin: 0;
   font-size: 18px;
@@ -334,8 +413,35 @@ input[type="text"]:focus {
   box-shadow: 0 0 0 3px rgba(147, 197, 253, 0.35);
 }
 
+/*
+  Task Edit Container (inline editing mode)
+*/
+.task-edit-container {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
+}
+
+.task-edit-container input[type="text"] {
+  flex: 1;
+}
+
+/* Hide category tag when task is in edit mode */
+.task-row.editing .task-category-tag {
+  display: none;
+}
+
+/*
+  Utility: Hidden element
+*/
+.hidden {
+  display: none !important;
+}
+
 /* Completed task text */
 #done-list > div span { color: var(--muted-text); text-decoration: line-through; }
+#done-list > div span.task-category-tag { text-decoration: none; }
 
 /* Completed task toggle button should be muted too */
 #done-list > div button.subtask-toggle {
@@ -365,13 +471,14 @@ button {
 /* Per-row action buttons (hidden until hover/focus) */
 #todo-list > div button,
 #done-list > div button {
-  margin-right: 0;
+  margin: 0;
   padding: 0;
-  width: auto;
+  width: 0;
+  overflow: hidden;
   color: var(--icon);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 1000ms ease, color 1000ms ease;
+  transition: opacity 0.2s ease, color 0.2s ease, width 0.2s ease, margin 0.2s ease;
 }
 
 /* Exception: subtask toggle button is always visible and uses text color */
@@ -380,6 +487,9 @@ button {
   opacity: 1;
   pointer-events: auto;
   color: var(--text);
+  width: auto;
+  overflow: visible;
+  margin-left: 5px;
 }
 
 #todo-list > div:hover button,
@@ -388,6 +498,9 @@ button {
 #done-list > div:focus-within button {
   opacity: 1;
   pointer-events: auto;
+  width: auto;
+  overflow: visible;
+  margin-left: 5px;
 }
 #todo-list > div button[aria-label="Remove task"]:hover,
 #done-list > div button[aria-label="Remove task"]:hover { color: var(--danger); }
@@ -395,9 +508,26 @@ button {
 #todo-list > div button[aria-label="Edit task"]:hover,
 #done-list > div button[aria-label="Edit task"]:hover { color: var(--blue); }
 
+#todo-list > div button[aria-label="Move up"]:hover,
+#todo-list > div button[aria-label="Move down"]:hover,
+#done-list > div button[aria-label="Move up"]:hover,
+#done-list > div button[aria-label="Move down"]:hover { color: var(--accent); }
+
+/*
+  Task Action Buttons (edit, remove, move)
+*/
+.task-action-btn {
+  font-size: 12px;
+}
+
+.task-move-btn {
+  font-size: 14px;
+}
+
 /* Header icon buttons */
 #theme-toggle,
-#export-tasks {
+#export-tasks,
+#import-tasks {
   width: 36px;
   height: 36px;
   color: var(--text);
@@ -407,7 +537,8 @@ button {
   padding-right: 0px;
 }
 .page-header #theme-toggle,
-.page-header #export-tasks {
+.page-header #export-tasks,
+.page-header #import-tasks {
   opacity: 1;
   pointer-events: auto;
   transition: opacity 150ms ease;
@@ -415,7 +546,9 @@ button {
 .page-header:hover #theme-toggle,
 .page-header:focus-within #theme-toggle,
 .page-header:hover #export-tasks,
-.page-header:focus-within #export-tasks {
+.page-header:focus-within #export-tasks,
+.page-header:hover #import-tasks,
+.page-header:focus-within #import-tasks {
   opacity: 1;
   pointer-events: auto;
 }
@@ -436,30 +569,184 @@ button {
   background: var(--card-bg);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 6px;
   padding: 12px;
   width: min(640px, 92vw);
   display: grid;
   gap: 8px;
 }
 .modal-title { font-size: 14px; font-weight: 500; }
-#share-url { width: 100%; height: 36px; font-size: 12px; }
-.modal-row { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
-.modal-actions { display: flex; align-items: center; gap: 8px; }
-.modal-actions button { width: 36px; height: 36px; }
-
-/* Copy button icon */
-#copy-url,
-#close-modal {
-  width: 36px;
+.modal-body { display: flex; flex-direction: column; gap: 12px; }
+.modal-description { margin: 0; font-size: 12px; color: var(--muted-text); }
+.modal-actions-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.modal-actions-row button {
+  width: auto;
   height: 36px;
-  color: var(--text);
-  font-weight: 700;
-  transition: none;
-  padding-right: 0px;
+  padding: 0 16px;
+  font-size: 12px;
 }
-#copy-url .icon-img { width: 18px; height: 18px; display: block; }
-:root[data-theme="dark"] #copy-url .icon-img { filter: invert(1); }
+#confirm-import {
+  background: var(--accent);
+  color: #ffffff;
+}
+#confirm-import:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+#import-file {
+  font-size: 12px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: var(--card-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+#import-file::file-selector-button {
+  background: var(--accent);
+  color: #ffffff;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 12px;
+  font-size: 12px;
+}
+
+/*
+  Categories Bar
+*/
+.categories-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+#category-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.category-tab {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.category-tab:hover {
+  border-color: var(--accent);
+  gap: 4px;
+}
+
+.category-tab.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.category-tab.active .category-name {
+  color: #ffffff;
+}
+
+.category-tab.active .category-action {
+  color: rgba(255, 255, 255, 0.7);
+  opacity: 0;
+  pointer-events: none;
+  width: 0;
+  padding: 0;
+  overflow: hidden;
+  transition: opacity 0.2s ease, width 0.2s ease, padding 0.2s ease;
+}
+
+.category-tab.active:hover .category-action {
+  opacity: 1;
+  pointer-events: auto;
+  width: auto;
+  padding: 2px;
+}
+
+.category-tab.active .category-action:hover {
+  color: #ffffff;
+}
+
+.category-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.category-action {
+  width: auto;
+  height: auto;
+  padding: 2px;
+  background: transparent;
+  border: none;
+  color: var(--icon);
+  font-size: 10px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, color 0.2s ease;
+}
+
+.category-tab:hover .category-action {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.category-action:hover {
+  color: var(--blue);
+}
+
+.category-delete:hover {
+  color: var(--danger) !important;
+}
+
+.category-edit-input {
+  width: 80px;
+  height: 24px;
+  font-size: 12px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--card-bg);
+  color: var(--text);
+}
+
+#add-category {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  font-size: 18px;
+  margin: 0px 0px;
+  font-weight: 400;
+  background: var(--card-bg);
+  border-radius: 6px;
+  color: var(--muted-text);
+  flex-shrink: 0;
+  transition: border-color 0.2s ease, color 0.2s ease;
+}
+
+#add-category:hover {
+  color: var(--accent);
+}
+
+/* Danger button for delete confirmation */
+.danger-btn {
+  background: var(--danger) !important;
+  color: #ffffff !important;
+}
 
 /*
   Minimal Install Banner
@@ -498,4 +785,15 @@ button {
   input[type="text"] { height: 42px; font-size: 16px; padding: 10px 12px; }
   input[type="checkbox"] { width: 20px; height: 20px; }
   button { width: 36px; height: 36px; }
+  .modal-title { font-size: 18px; }
+  .modal-description { font-size: 14px; }
+  .modal-actions-row button { height: 42px; font-size: 14px; }
+  #import-file { font-size: 14px; padding: 12px; }
+  #import-file::file-selector-button { font-size: 14px; padding: 8px 16px; }
+  .category-tab { font-size: 14px; padding: 8px 12px; }
+  .category-tab.active .category-action { font-size: 12px; opacity: 1; pointer-events: auto; width: auto; padding: 2px; }
+  .category-edit-input { font-size: 14px; height: 28px; }
+  #add-category { width: 36px; height: 36px; font-size: 20px; }
+  .task-category-tag { font-size: 12px; padding: 3px 8px; }
+  .task-category-select { font-size: 16px; height: 42px; padding: 0 12px; padding-right: 32px; max-width: 140px; }
 }

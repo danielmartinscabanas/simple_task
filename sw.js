@@ -1,3 +1,4 @@
+const CACHE_NAME = 'simpletask-v12';
 const ASSETS = [
   '/simple_task/',
   '/simple_task/index.html',
@@ -6,8 +7,7 @@ const ASSETS = [
   '/simple_task/manifest.webmanifest',
   '/simple_task/assets/icons/icon.svg',
   '/simple_task/assets/icons/icon-192.png',
-  '/simple_task/assets/icons/icon-512.png',
-  '/simple_task/assets/icons/copy-icon.svg'
+  '/simple_task/assets/icons/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
